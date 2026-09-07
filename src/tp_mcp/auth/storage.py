@@ -1,9 +1,12 @@
 """Unified credential storage with automatic backend selection.
 
 Uses system keyring when available, falls back to encrypted file storage.
-The TP_AUTH_COOKIE environment variable is a supported first-class auth
-source for headless servers, containers, and CI, and takes precedence
-over both stored backends.
+
+Two first-class environment-driven auth sources sit in front of the stored
+backends, in this order:
+1. TP_AUTH_COOKIE      - the cookie value inline. For CI and headless setups.
+2. TP_AUTH_COOKIE_FILE - a path to a file holding the cookie. For container
+   runtime-secret delivery; read fresh on every call for hot reload.
 """
 
 import os
@@ -13,6 +16,7 @@ from tp_mcp.auth.encrypted import (
     get_credential_encrypted,
     store_credential_encrypted,
 )
+from tp_mcp.auth.file_source import get_credential_file, is_file_source_configured
 from tp_mcp.auth.keyring import CredentialResult, is_keyring_available
 from tp_mcp.auth.keyring import clear_credential as clear_credential_keyring
 from tp_mcp.auth.keyring import get_credential as get_credential_keyring
@@ -29,6 +33,8 @@ def get_storage_backend() -> str:
     """
     if os.environ.get(ENV_VAR_NAME):
         return "environment"
+    if is_file_source_configured():
+        return "cookie_file"
     if is_keyring_available():
         return "keyring"
     return "encrypted_file"
@@ -74,16 +80,16 @@ def get_credential() -> CredentialResult:
     """Retrieve the TrainingPeaks auth cookie.
 
     Checks in order:
-    1. TP_AUTH_COOKIE environment variable (supported auth method for
-       headless servers, containers, and CI)
-    2. System keyring
-    3. Encrypted file
+    1. TP_AUTH_COOKIE environment variable (inline; CI / headless)
+    2. TP_AUTH_COOKIE_FILE (path to a file holding the cookie; container
+       runtime secret, re-read on every call for hot reload)
+    3. System keyring
+    4. Encrypted file
 
     Returns:
         CredentialResult with cookie if found.
     """
-    # Check environment variable first (supported headless/container/CI
-    # auth path; takes precedence over stored credentials)
+    # 1. Inline env var (takes precedence over everything else)
     env_cookie = os.environ.get(ENV_VAR_NAME)
     if env_cookie:
         return CredentialResult(
@@ -91,6 +97,15 @@ def get_credential() -> CredentialResult:
             message="Credential from environment variable",
             cookie=env_cookie,
         )
+
+    # 2. Cookie file. Read fresh every call - no caching - so a replaced file
+    #    is picked up without a process restart. When the var is set but the
+    #    file is missing/empty/unreadable we fall through to the stored
+    #    backends rather than hard-failing.
+    if is_file_source_configured():
+        file_result = get_credential_file()
+        if file_result.success:
+            return file_result
 
     # Try keyring first
     if is_keyring_available():
