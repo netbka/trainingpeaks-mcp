@@ -48,6 +48,7 @@ class TestListTools:
         assert core_tools.issubset(names)
         # v2.0 tools
         v2_tools = {
+            "tp_ai_generate_workout",
             "tp_update_workout",
             "tp_delete_workout",
             "tp_copy_workout",

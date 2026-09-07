@@ -31,6 +31,7 @@ from tp_mcp.tools import (
     tp_add_athletes_to_group,
     tp_add_note_comment,
     tp_add_workout_comment,
+    tp_ai_generate_workout,
     tp_analyze_workout,
     tp_apply_training_plan,
     tp_auth_status,
@@ -546,6 +547,49 @@ TOOLS = [
             "type": "object",
             "properties": {"workout_id": {"type": "string"}},
             "required": ["workout_id"],
+        },
+    ),
+    Tool(
+        name="tp_ai_generate_workout",
+        description=(
+            "Generate a TrainingPeaks structured workout from a natural-language "
+            "description. Pure generator: does NOT create, schedule, or modify "
+            "any workout."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workout_type_id": {
+                    "type": "integer",
+                    "description": "TrainingPeaks workout type id (3=Run, 2=Bike).",
+                },
+                "primary_intensity_metric": {
+                    "type": "string",
+                    "description": (
+                        "e.g. percentOfThresholdHr, percentOfThresholdPace, "
+                        "percentOfFtp, rpe"
+                    ),
+                },
+                "primary_length_metric": {
+                    "type": "string",
+                    "description": "duration or distance",
+                },
+                "primary_intensity_target_or_range": {
+                    "type": "string",
+                    "description": "range or target",
+                },
+                "user_content": {
+                    "type": "string",
+                    "description": "Natural-language workout description (the methodical spec).",
+                },
+            },
+            "required": [
+                "workout_type_id",
+                "primary_intensity_metric",
+                "primary_length_metric",
+                "primary_intensity_target_or_range",
+                "user_content",
+            ],
         },
     ),
     # --- Fitness & Summary ---
@@ -1510,7 +1554,7 @@ for _tool in TOOLS:
 # ---------------------------------------------------------------------------
 
 _READ_ONLY_PREFIXES = ("tp_get_", "tp_list_", "tp_download_", "tp_search_", "tp_validate_", "tp_analyze_")
-_READ_ONLY_EXTRA = {"tp_auth_status"}
+_READ_ONLY_EXTRA = {"tp_auth_status", "tp_ai_generate_workout"}
 
 # Irrecoverable data removal. Everything else that writes is recoverable by a
 # follow-up call (update/re-add), so destructiveHint stays False there.
@@ -1749,6 +1793,16 @@ async def _h_get_peaks(args):
 
 @_handler("tp_analyze_workout")
 async def _h_analyze(args): return await tp_analyze_workout(workout_id=args["workout_id"])
+
+@_handler("tp_ai_generate_workout")
+async def _h_ai_generate_workout(args):
+    return await tp_ai_generate_workout(
+        workout_type_id=args["workout_type_id"],
+        primary_intensity_metric=args["primary_intensity_metric"],
+        primary_length_metric=args["primary_length_metric"],
+        primary_intensity_target_or_range=args["primary_intensity_target_or_range"],
+        user_content=args["user_content"],
+    )
 
 # --- Structured strength / gym ---
 @_handler("tp_search_exercises")
