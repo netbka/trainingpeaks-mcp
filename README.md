@@ -244,7 +244,33 @@ tp-mcp serve
 
 Or in your MCP client config, add it under the server's `env` block. This is a **supported, first-class auth method**, not a testing-only override - it is the recommended path wherever the keyring and encrypted-file backends don't work: headless Linux boxes without Secret Service, containers that are rebuilt (the encrypted file's key is derived from a machine-specific salt, so it doesn't survive a rebuild), and CI.
 
-Precedence: `TP_AUTH_COOKIE` is always checked **first**, before the system keyring, then the encrypted file, so setting it overrides any stored credential.
+**Option D: Cookie file (`TP_AUTH_COOKIE_FILE`) - hot-reloadable container secret**
+
+Set `TP_AUTH_COOKIE_FILE` to the path of a file that contains **only** the
+`Production_tpAuth` cookie value:
+
+```bash
+export TP_AUTH_COOKIE_FILE=/run/secrets/tp_auth_cookie
+tp-mcp serve
+```
+
+Unlike `TP_AUTH_COOKIE`, the file is **re-read on every credential lookup** -
+nothing is cached. A host-side process can replace the file (atomically) and the
+next cookie->token exchange picks up the new value **without restarting the
+process or container**. This is the intended path for a Docker container fed by
+a read-only bind-mounted runtime secret that an external refresher keeps current.
+
+Behaviour when `TP_AUTH_COOKIE_FILE` is set but the file is missing, empty, or
+unreadable: the source is skipped and lookup falls through to the keyring / the
+encrypted file (it does not hard-fail). The cookie value never appears in a log
+line, exception, or tool result.
+
+Precedence (highest first):
+
+1. `TP_AUTH_COOKIE` (inline env var)
+2. `TP_AUTH_COOKIE_FILE` (file path, re-read every call)
+3. system keyring
+4. encrypted file
 
 > **Security note:** the cookie grants full access to your TrainingPeaks account, so treat `TP_AUTH_COOKIE` like a password. Inject it from a secrets manager or your orchestrator's secret mechanism - never hard-code it in Dockerfiles, compose files, or anything committed to git. Be aware that environment variables are readable by any process running as the same user, and via `docker inspect`. On desktop setups, the keyring/encrypted-file storage (Options A and B) remains the recommended default; `TP_AUTH_COOKIE` is for headless and container use.
 
