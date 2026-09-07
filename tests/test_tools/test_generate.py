@@ -136,3 +136,23 @@ async def test_validation_bad_workout_type_id():
     result = await tp_ai_generate_workout(**args)
     assert result["isError"] is True
     assert result["error_code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_generate_url_env_override(monkeypatch):
+    """TP_AI_WORKOUT_GENERATE_URL overrides the default endpoint."""
+    monkeypatch.setenv(
+        "TP_AI_WORKOUT_GENERATE_URL", "https://example.test/custom/generate"
+    )
+    mock_client = _mock_tp_client()
+    mock_http = _mock_http_client()
+
+    with patch("tp_mcp.tools.generate.TPClient") as tp, patch(
+        "tp_mcp.tools.generate.httpx.AsyncClient"
+    ) as hx:
+        tp.return_value.__aenter__.return_value = mock_client
+        hx.return_value.__aenter__.return_value = mock_http
+        result = await tp_ai_generate_workout(**_VALID_ARGS)
+
+    assert "isError" not in result
+    assert mock_http.post.call_args[0][0] == "https://example.test/custom/generate"

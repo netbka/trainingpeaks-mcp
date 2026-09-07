@@ -15,6 +15,7 @@ exchange (``TPClient._ensure_access_token``) and make a direct ``httpx`` call.
 """
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -24,9 +25,17 @@ from tp_mcp.client import TPClient
 
 logger = logging.getLogger("tp-mcp")
 
-GENERATE_API_BASE = "https://api.peakswaresb.com"
-GENERATE_PATH = "/workout-analysis/v1/generate/workout"
+# Full endpoint URL, overridable via TP_AI_WORKOUT_GENERATE_URL (docker/mcp-tp/.env).
+_DEFAULT_GENERATE_URL = (
+    "https://api.peakswaresb.com/workout-analysis/v1/generate/workout"
+)
 GENERATE_TIMEOUT = 60.0
+
+
+def _generate_url() -> str:
+    value = os.environ.get("TP_AI_WORKOUT_GENERATE_URL", "").strip()
+    return value or _DEFAULT_GENERATE_URL
+
 
 _MAX_USER_CONTENT = 4000
 
@@ -141,7 +150,7 @@ async def tp_ai_generate_workout(
         async with httpx.AsyncClient(timeout=GENERATE_TIMEOUT) as http_client:
             try:
                 response = await http_client.post(
-                    f"{GENERATE_API_BASE}{GENERATE_PATH}",
+                    _generate_url(),
                     headers=headers,
                     json=body,
                 )
