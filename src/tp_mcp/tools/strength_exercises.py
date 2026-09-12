@@ -103,15 +103,25 @@ def normalize_library_content(payload: Any) -> dict[str, Any]:
         title = str(item.get("title") or "").strip()
         if not exercise_id or not title:
             continue
-        attrs = item.get("searchAttributes") if isinstance(item.get("searchAttributes"), dict) else {}
+        attrs = (
+            item.get("searchAttributes")
+            if isinstance(item.get("searchAttributes"), dict)
+            else {}
+        )
         exercises[exercise_id] = {
             "id": exercise_id,
             "exerciseId": exercise_id,
             "title": title,
             "searchText": str(item.get("searchText") or "").strip() or None,
-            "alternateTitles": [str(v) for v in (attrs.get("alternateTitles") or []) if str(v).strip()],
-            "primaryMuscleGroups": [str(v) for v in (attrs.get("primaryMuscleGroups") or []) if str(v).strip()],
-            "secondaryMuscleGroups": [str(v) for v in (attrs.get("secondaryMuscleGroups") or []) if str(v).strip()],
+            "alternateTitles": [
+                str(v) for v in (attrs.get("alternateTitles") or []) if str(v).strip()
+            ],
+            "primaryMuscleGroups": [
+                str(v) for v in (attrs.get("primaryMuscleGroups") or []) if str(v).strip()
+            ],
+            "secondaryMuscleGroups": [
+                str(v) for v in (attrs.get("secondaryMuscleGroups") or []) if str(v).strip()
+            ],
             "canEdit": item.get("canEdit") is True,
             "ownerId": item.get("ownerId"),
             # Slim libraryContent rows do not contain these. Call
@@ -172,7 +182,10 @@ def normalize_parameter_catalog(payload: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-async def fetch_exercise_parameter_catalog(access: str, h: httpx.AsyncClient) -> dict[str, dict[str, Any]]:
+async def fetch_exercise_parameter_catalog(
+    access: str,
+    h: httpx.AsyncClient,
+) -> dict[str, dict[str, Any]]:
     r = await h.get(
         f"{STRENGTH_API_BASE}/rx/activity/v1/parameters/exercise",
         headers=_headers(access),
@@ -201,7 +214,8 @@ def _project_exercise(exercise: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_parameter_names(
-    names: list[str], catalog: dict[str, dict[str, Any]]
+    names: list[str],
+    catalog: dict[str, dict[str, Any]],
 ) -> tuple[list[str], dict[str, Any] | None]:
     cleaned: list[str] = []
     for raw in names:
@@ -214,7 +228,7 @@ def _validate_parameter_names(
     if unknown:
         return [], _err(
             "VALIDATION_ERROR",
-            f"Unknown TrainingPeaks exercise parameter(s): {unknown}. Allowed: {sorted(catalogue_name for catalogue_name in catalog)}",
+            f"Unknown TrainingPeaks exercise parameter(s): {unknown}. Allowed: {sorted(catalog)}",
         )
     return cleaned, None
 
@@ -269,7 +283,10 @@ async def tp_get_exercise(exercise_id: str) -> dict[str, Any]:
 
     eid = str(exercise_id).strip()
     if not eid or not eid.isdigit():
-        return _err("VALIDATION_ERROR", "exercise_id must be a numeric TrainingPeaks exercise id.")
+        return _err(
+            "VALIDATION_ERROR",
+            "exercise_id must be a numeric TrainingPeaks exercise id.",
+        )
 
     async with TPClient() as client:
         _, access, err = await _access(client)
@@ -331,6 +348,17 @@ async def tp_create_custom_exercise(
                     if group_err:
                         return group_err
 
+                # A POST creates a real server-side scaffold. Validate explicit
+                # caller parameters before that mutation whenever possible.
+                requested: list[str] | None = None
+                if parameters is not None:
+                    requested, parameter_err = _validate_parameter_names(
+                        parameters,
+                        parameter_catalog,
+                    )
+                    if parameter_err:
+                        return parameter_err
+
                 scaffold_response = await h.post(
                     f"{STRENGTH_API_BASE}/rx/activity/v1/exercises",
                     headers=_headers(access),
@@ -339,18 +367,23 @@ async def tp_create_custom_exercise(
                     return _map_status(scaffold_response.status_code, scaffold_response.text)
                 scaffold = _unwrap_data(scaffold_response.json())
                 if not isinstance(scaffold, dict) or not scaffold.get("id"):
-                    return _err("API_ERROR", "TrainingPeaks returned an invalid custom-exercise scaffold.")
+                    return _err(
+                        "API_ERROR",
+                        "TrainingPeaks returned an invalid custom-exercise scaffold.",
+                    )
 
-                requested = parameters
                 if requested is None:
-                    requested = [
+                    scaffold_parameters = [
                         str(p.get("parameter"))
                         for p in (scaffold.get("parameters") or [])
                         if isinstance(p, dict) and p.get("parameter")
                     ]
-                requested, parameter_err = _validate_parameter_names(requested, parameter_catalog)
-                if parameter_err:
-                    return parameter_err
+                    requested, parameter_err = _validate_parameter_names(
+                        scaffold_parameters,
+                        parameter_catalog,
+                    )
+                    if parameter_err:
+                        return parameter_err
 
                 payload = deepcopy(scaffold)
                 payload["title"] = clean_title
@@ -386,7 +419,10 @@ async def tp_create_custom_exercise(
             return _map_status(saved_response.status_code, saved_response.text)
         saved = _unwrap_data(saved_response.json())
         if not isinstance(saved, dict) or not saved.get("id"):
-            return _err("API_ERROR", "TrainingPeaks did not return a permanent custom exercise id.")
+            return _err(
+                "API_ERROR",
+                "TrainingPeaks did not return a permanent custom exercise id.",
+            )
         return _project_exercise(saved)
 
 
@@ -403,7 +439,10 @@ async def tp_update_custom_exercise(
 
     eid = str(exercise_id).strip()
     if not eid or not eid.isdigit():
-        return _err("VALIDATION_ERROR", "exercise_id must be a numeric TrainingPeaks exercise id.")
+        return _err(
+            "VALIDATION_ERROR",
+            "exercise_id must be a numeric TrainingPeaks exercise id.",
+        )
     if all(
         value is None
         for value in (
@@ -435,16 +474,25 @@ async def tp_update_custom_exercise(
                 if not isinstance(current, dict) or not current:
                     return _err("NOT_FOUND", "Exercise not found.")
                 if current.get("canEdit") is not True or current.get("ownerId") is None:
-                    return _err("READ_ONLY", "Only caller-owned custom exercises can be updated.")
+                    return _err(
+                        "READ_ONLY",
+                        "Only caller-owned custom exercises can be updated.",
+                    )
 
                 library = await fetch_live_library_content(access, h)
                 library_row = library["exercises"].get(eid)
                 if library_row is not None:
                     if library_row.get("canEdit") is not True:
-                        return _err("READ_ONLY", "This TrainingPeaks exercise is not editable.")
+                        return _err(
+                            "READ_ONLY",
+                            "This TrainingPeaks exercise is not editable.",
+                        )
                     live_owner = library_row.get("ownerId")
                     if live_owner is not None and str(live_owner) != str(current.get("ownerId")):
-                        return _err("READ_ONLY", "Exercise ownership does not match the current library entry.")
+                        return _err(
+                            "READ_ONLY",
+                            "Exercise ownership does not match the current library entry.",
+                        )
 
                 for groups, field in (
                     (primary_muscle_groups, "primary"),
@@ -468,13 +516,20 @@ async def tp_update_custom_exercise(
 
                 if parameters is not None:
                     parameter_catalog = await fetch_exercise_parameter_catalog(access, h)
-                    requested, parameter_err = _validate_parameter_names(parameters, parameter_catalog)
+                    requested, parameter_err = _validate_parameter_names(
+                        parameters,
+                        parameter_catalog,
+                    )
                     if parameter_err:
                         return parameter_err
                     payload["parameters"] = _materialize_parameters(
                         requested,
                         parameter_catalog,
-                        [p for p in (current.get("parameters") or []) if isinstance(p, dict)],
+                        [
+                            p
+                            for p in (current.get("parameters") or [])
+                            if isinstance(p, dict)
+                        ],
                     )
 
                 saved_response = await h.put(
