@@ -75,6 +75,7 @@ from tp_mcp.tools.strength import (
     tp_search_exercises,
     tp_update_strength_workout,
 )
+from tp_mcp.tools.strength_exercise_list import tp_list_strength_exercises
 from tp_mcp.tools.strength_exercises import (
     tp_create_custom_exercise,
     tp_get_exercise,
@@ -185,6 +186,7 @@ __all__ = [
     "tp_upload_workout_file",
     "tp_validate_structure",
     "tp_search_exercises",
+    "tp_list_strength_exercises",
     "tp_create_strength_workout",
     "tp_get_strength_summary",
     "tp_get_strength_workout",
