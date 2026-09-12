@@ -23,7 +23,12 @@ from tp_mcp.tools.strength_exercises import (
 _INSTALLED = False
 
 
-def _tool(name: str, description: str, properties: dict[str, Any], required: list[str]) -> Tool:
+def _tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+) -> Tool:
     tool = Tool(
         name=name,
         description=description,
@@ -55,34 +60,55 @@ def install_strength_exercise_tools() -> None:
     tools = [
         _tool(
             "tp_get_exercise",
-            "Get one TrainingPeaks Strength Builder exercise in full by numeric id, including video, instructions, native parameters, muscle groups, ownership and editability.",
+            (
+                "Get one TrainingPeaks Strength Builder exercise in full by numeric id, "
+                "including video, instructions, native parameters, muscle groups, "
+                "ownership and editability."
+            ),
             {
                 "exercise_id": {
                     "type": "string",
-                    "description": "Numeric TrainingPeaks strength exercise id from tp_search_exercises.",
+                    "description": (
+                        "Numeric TrainingPeaks strength exercise id from "
+                        "tp_search_exercises."
+                    ),
                 }
             },
             ["exercise_id"],
         ),
         _tool(
             "tp_create_custom_exercise",
-            "Create a reusable custom Strength Builder exercise in the authenticated TrainingPeaks account. This is a real external mutation. TrainingPeaks assigns the permanent numeric exercise id.",
+            (
+                "Create a reusable custom Strength Builder exercise in the "
+                "authenticated TrainingPeaks account. This is a real external "
+                "mutation. TrainingPeaks assigns the permanent numeric exercise id."
+            ),
             {
                 "title": {"type": "string", "description": "Exercise title."},
                 "parameters": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "TrainingPeaks exercise parameters, e.g. Reps, WeightKg, RepsPerSide, Duration, RPE, RIR. Omit to keep the scaffold defaults.",
+                    "description": (
+                        "TrainingPeaks exercise parameters, e.g. Reps, WeightKg, "
+                        "RepsPerSide, Duration, RPE, RIR. Omit to keep the "
+                        "scaffold defaults."
+                    ),
                 },
                 "video_url": {
                     "type": "string",
                     "description": "Optional YouTube/Vimeo/demo URL.",
                 },
-                "instructions": {"type": "string", "description": "Optional technique/instruction text."},
+                "instructions": {
+                    "type": "string",
+                    "description": "Optional technique/instruction text.",
+                },
                 "primary_muscle_groups": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Primary TrainingPeaks muscle groups, e.g. Quads, Glute, Hamstrings.",
+                    "description": (
+                        "Primary TrainingPeaks muscle groups, e.g. Quads, Glute, "
+                        "Hamstrings."
+                    ),
                 },
                 "secondary_muscle_groups": {
                     "type": "array",
@@ -94,7 +120,12 @@ def install_strength_exercise_tools() -> None:
         ),
         _tool(
             "tp_update_custom_exercise",
-            "Update a caller-owned custom Strength Builder exercise. Built-in/read-only exercises are rejected. Only supplied fields change; parameter metadata is validated against TrainingPeaks' live parameter catalogue.",
+            (
+                "Update a caller-owned custom Strength Builder exercise. "
+                "Built-in/read-only exercises are rejected. Only supplied fields "
+                "change; parameter metadata is validated against TrainingPeaks' "
+                "live parameter catalogue."
+            ),
             {
                 "exercise_id": {
                     "type": "string",
@@ -104,12 +135,21 @@ def install_strength_exercise_tools() -> None:
                 "parameters": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Replacement parameter list. Omit to leave parameters unchanged.",
+                    "description": (
+                        "Replacement parameter list. Omit to leave parameters "
+                        "unchanged."
+                    ),
                 },
                 "video_url": {"type": "string"},
                 "instructions": {"type": "string"},
-                "primary_muscle_groups": {"type": "array", "items": {"type": "string"}},
-                "secondary_muscle_groups": {"type": "array", "items": {"type": "string"}},
+                "primary_muscle_groups": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "secondary_muscle_groups": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
             },
             ["exercise_id"],
         ),
@@ -156,17 +196,32 @@ def install_strength_exercise_tools() -> None:
     search_tool = base._TOOLS_BY_NAME.get("tp_search_exercises")
     if search_tool is not None:
         search_tool.description = (
-            "Search the current TrainingPeaks Strength Builder exercise library, including caller-owned custom exercises. "
-            "Uses the live combined library when authenticated and falls back to the baked built-in snapshot if live discovery is unavailable. "
-            "Use tp_get_exercise when full instructions/video/native parameter metadata is needed."
+            "Search the current TrainingPeaks Strength Builder exercise library, "
+            "including caller-owned custom exercises. Uses the live combined "
+            "library when authenticated and falls back to the baked built-in "
+            "snapshot if live discovery is unavailable. Use tp_get_exercise when "
+            "full instructions/video/native parameter metadata is needed."
         )
 
     create_workout_tool = base._TOOLS_BY_NAME.get("tp_create_strength_workout")
     if create_workout_tool is not None:
         create_workout_tool.description = (
-            "Create a structured strength/gym workout on the athlete's calendar using built-in or caller-owned custom exercise ids from tp_search_exercises. "
-            "Blocks contain sets and parameters such as Reps, WeightKg, Duration, RPE or RIR."
+            "Create a structured strength/gym workout on the athlete's calendar "
+            "using built-in or caller-owned custom exercise ids from "
+            "tp_search_exercises. Blocks contain sets and parameters such as Reps, "
+            "WeightKg, Duration, RPE or RIR."
         )
+        blocks = create_workout_tool.input_schema.get("properties", {}).get("blocks")
+        if isinstance(blocks, dict):
+            blocks["description"] = (
+                "Ordered blocks. Each block: {type: WarmUp|SingleExercise|Superset|"
+                "Circuit|CoolDown, title?, notes?, exercises: [{id: '<library id>', "
+                "notes?, sets: [{<param>: <value>}, ...]}]}. Parameters include "
+                "Reps, RepsPerSide, WeightKg/WeightLb, WeightPerSideKg/WeightPerSideLb, "
+                "WeightPercentage, Duration, distance/height variants, RPE, RIR, Watts, "
+                "VelocityMetersPerSec and Cals. Superset/Circuit blocks require the "
+                "same number of sets for every exercise."
+            )
 
     _INSTALLED = True
 
