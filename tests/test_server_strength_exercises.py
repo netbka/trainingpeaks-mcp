@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tp_mcp import server
 import tp_mcp.server_strength_exercises as extension
+from tp_mcp import server
 
 
 @pytest.fixture(autouse=True)
@@ -55,8 +55,13 @@ async def test_registered_list_tool_dispatches_without_athlete_parameter():
     assert "athlete" not in tool.input_schema["properties"]
     assert tool.input_schema["required"] == []
 
-    mocked = AsyncMock(return_value={"count": 1, "exercises": [{"exercise_id": "628875"}]})
-    with patch("tp_mcp.server_strength_exercises.tp_list_strength_exercises", new=mocked):
+    mocked = AsyncMock(
+        return_value={"count": 1, "exercises": [{"exercise_id": "628875"}]}
+    )
+    with patch(
+        "tp_mcp.server_strength_exercises.tp_list_strength_exercises",
+        new=mocked,
+    ):
         result = await server.call_tool("tp_list_strength_exercises", {})
 
     payload = json.loads(result[0].text)
@@ -71,9 +76,17 @@ async def test_registered_create_tool_dispatches_without_athlete_parameter():
     assert "athlete" not in tool.input_schema["properties"]
     assert tool.input_schema["required"] == ["title"]
 
-    mocked = AsyncMock(return_value={"exercise_id": "628875", "title": "жим платформы"})
-    with patch("tp_mcp.server_strength_exercises.tp_create_custom_exercise", new=mocked):
-        result = await server.call_tool("tp_create_custom_exercise", {"title": "жим платформы"})
+    mocked = AsyncMock(
+        return_value={"exercise_id": "628875", "title": "жим платформы"}
+    )
+    with patch(
+        "tp_mcp.server_strength_exercises.tp_create_custom_exercise",
+        new=mocked,
+    ):
+        result = await server.call_tool(
+            "tp_create_custom_exercise",
+            {"title": "жим платформы"},
+        )
 
     payload = json.loads(result[0].text)
     assert payload["exercise_id"] == "628875"
