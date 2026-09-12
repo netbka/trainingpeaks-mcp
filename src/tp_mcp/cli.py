@@ -86,6 +86,7 @@ def cmd_auth(from_browser: str | None = None) -> int:
     print()
     print("Validating...")
 
+    # Validate the cookie
     result = validate_auth_sync(cookie)
 
     if not result.is_valid:
@@ -96,6 +97,7 @@ def cmd_auth(from_browser: str | None = None) -> int:
             print("The cookie appears to be invalid. Check that you copied it correctly.")
         return 1
 
+    # Store the credential
     store_result = store_credential(cookie)
     if not store_result.success:
         print(f"Error storing credential: {store_result.message}")
@@ -142,7 +144,7 @@ def cmd_auth_clear() -> int:
     """Clear stored credentials.
 
     Returns:
-        Exit code (0 for success).
+        Exit code (0).
     """
     result = clear_credential()
     if result.success:
@@ -158,8 +160,8 @@ def cmd_serve() -> int:
     Returns:
         Exit code.
     """
-    # The extension installs the live/custom Strength Builder exercise tools
-    # into the stable server registry, then delegates to its normal runner.
+    # Install live/custom Strength Builder exercise tools, then delegate to the
+    # normal MCP server runner.
     from tp_mcp.server_strength_exercises import run_server
 
     return run_server()
@@ -174,8 +176,10 @@ def cmd_config() -> int:
     import json
     import shutil
 
+    # Find the tp-mcp binary path
     tp_mcp_path = shutil.which("tp-mcp")
     if not tp_mcp_path:
+        # Fall back to sys.executable directory
         from pathlib import Path
         tp_mcp_path = str(Path(sys.executable).parent / "tp-mcp")
 
@@ -230,6 +234,7 @@ def main() -> int:
 
     command = sys.argv[1].lower()
 
+    # Handle auth command with optional --from-browser flag
     if command == "auth":
         from_browser = None
         args = sys.argv[2:]
