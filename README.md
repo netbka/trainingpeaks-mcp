@@ -24,6 +24,7 @@ Ask your AI assistant things like:
 - "Add a calendar note for next Monday: rest day, travel"
 
 ## Tools (86)
+## Tools (87)
 
 ### Workouts
 | Tool | Description |
@@ -133,13 +134,24 @@ honoured exactly. They update a **threshold** (FTP / LTHR / threshold pace).
 ### Strength Workouts
 | Tool | Description |
 |------|-------------|
-| `tp_search_exercises` | Search the built-in strength exercise library by name (offline) |
-| `tp_create_strength_workout` | Create a structured strength/gym workout (blocks of exercises with sets and parameters) |
+| `tp_search_exercises` | Search the live Strength Builder exercise library, including caller-owned custom exercises; falls back to the baked built-in snapshot if live discovery is unavailable |
+| `tp_get_exercise` | Get one strength exercise in full by numeric ID, including instructions, video, native parameters, muscle groups and editability |
+| `tp_create_custom_exercise` | Create a reusable caller-owned custom Strength Builder exercise; TrainingPeaks assigns the permanent numeric ID |
+| `tp_update_custom_exercise` | Update a caller-owned custom exercise; built-in/read-only exercises are rejected |
+| `tp_create_strength_workout` | Create a structured strength/gym workout with built-in or custom exercise IDs, blocks, sets and parameters |
 | `tp_get_strength_summary` | Get a strength workout's compliance summary (blocks/prescriptions/sets completed) |
 | `tp_get_strength_workouts` | List strength/gym workouts in a date range (they don't appear in `tp_get_workouts`) |
 | `tp_get_strength_workout` | Get a strength workout's full detail: blocks, exercises, sets, prescribed vs executed weights |
 | `tp_update_strength_workout` | Update a strength workout in place (replace/append blocks, retitle, mark complete) - preserves Garmin TSS and FIT files, so use this rather than delete-and-recreate on device-synced workouts |
 | `tp_delete_strength_workout` | Delete a strength workout by ID |
+
+Custom exercise discovery and authoring use the current Strength Builder contracts from
+`api.peakswaresb.com`: the combined library comes from `GET /rx/activity/v1/libraryContent`,
+parameter definitions from `GET /rx/activity/v1/parameters/exercise`, and creation is a
+TrainingPeaks-managed two-step `POST /rx/activity/v1/exercises` scaffold followed by a
+full `PUT /rx/activity/v1/exercises`. The connector never invents `ownerId`, parameter IDs
+or permanent exercise IDs. There is intentionally no custom-exercise delete tool until a
+delete contract is verified.
 
 ### Athlete Groups (coach accounts)
 | Tool | Description |
@@ -245,7 +257,33 @@ tp-mcp serve
 
 Or in your MCP client config, add it under the server's `env` block. This is a **supported, first-class auth method**, not a testing-only override - it is the recommended path wherever the keyring and encrypted-file backends don't work: headless Linux boxes without Secret Service, containers that are rebuilt (the encrypted file's key is derived from a machine-specific salt, so it doesn't survive a rebuild), and CI.
 
-Precedence: `TP_AUTH_COOKIE` is always checked **first**, before the system keyring, then the encrypted file, so setting it overrides any stored credential.
+**Option D: Cookie file (`TP_AUTH_COOKIE_FILE`) - hot-reloadable container secret**
+
+Set `TP_AUTH_COOKIE_FILE` to the path of a file that contains **only** the
+`Production_tpAuth` cookie value:
+
+```bash
+export TP_AUTH_COOKIE_FILE=/run/secrets/tp_auth_cookie
+tp-mcp serve
+```
+
+Unlike `TP_AUTH_COOKIE`, the file is **re-read on every credential lookup** -
+nothing is cached. A host-side process can replace the file (atomically) and the
+next cookie->token exchange picks up the new value **without restarting the
+process or container**. This is the intended path for a Docker container fed by
+a read-only bind-mounted runtime secret that an external refresher keeps current.
+
+Behaviour when `TP_AUTH_COOKIE_FILE` is set but the file is missing, empty, or
+unreadable: the source is skipped and lookup falls through to the keyring / the
+encrypted file (it does not hard-fail). The cookie value never appears in a log
+line, exception, or tool result.
+
+Precedence (highest first):
+
+1. `TP_AUTH_COOKIE` (inline env var)
+2. `TP_AUTH_COOKIE_FILE` (file path, re-read every call)
+3. system keyring
+4. encrypted file
 
 > **Security note:** the cookie grants full access to your TrainingPeaks account, so treat `TP_AUTH_COOKIE` like a password. Inject it from a secrets manager or your orchestrator's secret mechanism - never hard-code it in Dockerfiles, compose files, or anything committed to git. Be aware that environment variables are readable by any process running as the same user, and via `docker inspect`. On desktop setups, the keyring/encrypted-file storage (Options A and B) remains the recommended default; `TP_AUTH_COOKIE` is for headless and container use.
 

@@ -144,7 +144,7 @@ def cmd_auth_clear() -> int:
     """Clear stored credentials.
 
     Returns:
-        Exit code (0 for success).
+        Exit code (0).
     """
     result = clear_credential()
     if result.success:
@@ -160,7 +160,9 @@ def cmd_serve() -> int:
     Returns:
         Exit code.
     """
-    from tp_mcp.server import run_server
+    # Install live/custom Strength Builder exercise tools, then delegate to the
+    # normal MCP server runner.
+    from tp_mcp.server_strength_exercises import run_server
 
     return run_server()
 
