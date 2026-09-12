@@ -4,9 +4,9 @@ Endurance workouts (`tp_create_workout`) use the main TrainingPeaks fitness API
 with power/HR/pace interval structures. Strength workouts are a completely
 different model — `workoutType: "StructuredStrength"` posted to the Peaksware
 strength API (`api.peakswaresb.com`, same Bearer token we already use for
-`tp_analyze_workout`). Exercises come from a fixed library (numeric string IDs);
-the catalogue is baked into `tp_mcp/data/exercises.json` (no search endpoint
-exists server-side), so `tp_search_exercises` runs fully offline.
+`tp_analyze_workout`). Exercise discovery prefers the live combined Strength
+Builder library (built-in + caller-owned custom exercises); the baked
+`tp_mcp/data/exercises.json` catalogue remains a built-in fallback.
 
 Verified against the live API:
   • create  → POST   /rx/activity/v1/workouts/save        (returns numeric id)
@@ -58,7 +58,9 @@ from typing import Any
 
 import httpx
 
+from tp_mcp.auth import get_credential
 from tp_mcp.client import TPClient
+from tp_mcp.tools.strength_exercises import fetch_live_library_content
 
 logger = logging.getLogger("tp-mcp")
 
@@ -67,13 +69,14 @@ STRENGTH_TIMEOUT = 30.0
 
 # The full parameter catalogue (per exercise sets). Integer-format ones are
 # whole counts; everything else is decimal. Anything outside this set is
-# rejected so a typo can't silently produce an empty column.
+# rejected so a typo can't silently produce an empty column. RIR is part of the
+# current TrainingPeaks Strength Builder parameter catalogue.
 _INTEGER_PARAMS = {"Reps", "RepsPerSide", "Cals"}
 _KNOWN_PARAMS = _INTEGER_PARAMS | {
     "WeightKg", "WeightLb", "WeightPerSideKg", "WeightPerSideLb", "WeightPercentage",
     "Duration", "DistanceMeters", "DistanceKm", "DistanceFt", "DistanceYd",
     "DistanceMiles", "HeightCm", "HeightM", "HeightIn", "HeightFt",
-    "RPE", "Watts", "VelocityMetersPerSec",
+    "RPE", "RIR", "Watts", "VelocityMetersPerSec",
 }
 _BLOCK_TYPES = {"WarmUp", "SingleExercise", "Superset", "Circuit", "CoolDown"}
 # Blocks where every exercise must share the same number of sets (verified
@@ -89,25 +92,18 @@ def _err(code: str, message: str) -> dict[str, Any]:
     return {"isError": True, "error_code": code, "message": message}
 
 
-# ── Exercise catalogue (baked, offline) ─────────────────────────────────────
+# ── Exercise catalogue (live + baked fallback) ──────────────────────────────
 #
 # PROVENANCE of `tp_mcp/data/exercises.json` (944 exercises):
-#   The Peaksware strength API exposes NO list/search endpoint for the exercise
-#   library, but each exercise IS readable individually by its numeric id (same
-#   `api.peakswaresb.com` host + Bearer token as the workout endpoints). This
-#   file is a one-time static snapshot built by fetching the exercises by id and
-#   projecting each to the fields the tools use (id, title, videoUrl,
-#   primary/secondary MuscleGroups, parameters). TP's library changes rarely;
-#   the snapshot is refreshable by re-fetching by id if it ever drifts. It is
-#   data, not code — reviewers can skip its contents.
+#   This remains a built-in fallback for unauthenticated/offline search and for
+#   existing workout authoring. The current Strength Builder also exposes a live
+#   combined library via `/rx/activity/v1/libraryContent`; that live source is
+#   required to discover account-specific custom exercises.
 
 
 @lru_cache(maxsize=1)
 def _catalogue() -> dict[str, dict[str, Any]]:
-    """The built-in exercise library, keyed by string id.
-
-    Static snapshot baked from the per-id Peaksware endpoint — see the
-    PROVENANCE note above for how it was generated / how to refresh it."""
+    """The baked built-in exercise fallback, keyed by string id."""
     try:
         from importlib.resources import files
 
@@ -120,65 +116,149 @@ def _catalogue() -> dict[str, dict[str, Any]]:
     return json.loads(text)
 
 
+def _merge_live_with_baked(live: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Use live membership/search metadata, enriching built-ins from the snapshot."""
+    baked = _catalogue()
+    merged: dict[str, dict[str, Any]] = {}
+    for eid, row in live.items():
+        base = dict(baked.get(eid) or {})
+        base.update(row)
+        if eid in baked:
+            if not row.get("videoUrl"):
+                base["videoUrl"] = baked[eid].get("videoUrl")
+            if not row.get("parameters"):
+                base["parameters"] = baked[eid].get("parameters") or []
+        merged[eid] = base
+    return merged
+
+
+def _search_catalogue(
+    catalogue: dict[str, dict[str, Any]],
+    query: str,
+    muscle_group: str,
+    limit: int,
+    *,
+    source: str,
+) -> list[dict[str, Any]]:
+    q = query.lower()
+    mg = muscle_group.lower()
+    out: list[dict[str, Any]] = []
+    for ex in catalogue.values():
+        title = str(ex.get("title") or "")
+        alternates = [str(v) for v in (ex.get("alternateTitles") or [])]
+        search_text = str(ex.get("searchText") or "")
+        haystack = " ".join([title, search_text, *alternates]).lower()
+        if q and q not in haystack:
+            continue
+        primary = [str(v) for v in (ex.get("primaryMuscleGroups") or [])]
+        secondary = [str(v) for v in (ex.get("secondaryMuscleGroups") or [])]
+        groups = " ".join(primary + secondary).lower()
+        if mg and mg not in groups:
+            continue
+        params = ex.get("parameters") or []
+        out.append(
+            {
+                "id": str(ex.get("id") or ex.get("exerciseId") or ""),
+                "title": title,
+                "video_url": ex.get("videoUrl"),
+                "muscle_groups": primary,
+                "parameters": [
+                    p.get("parameter")
+                    for p in params
+                    if isinstance(p, dict) and p.get("parameter")
+                ],
+                "custom": ex.get("canEdit") is True and ex.get("ownerId") is not None,
+                "can_edit": ex.get("canEdit") is True,
+                "owner_id": ex.get("ownerId"),
+                "source": source,
+            }
+        )
+    if q:
+        out.sort(
+            key=lambda e: (
+                e["title"].lower() != q,
+                not e["title"].lower().startswith(q),
+                e["title"].lower(),
+            )
+        )
+    else:
+        out.sort(key=lambda e: e["title"].lower())
+    return out[:limit]
+
+
 async def tp_search_exercises(
     query: str,
     limit: int = 20,
     muscle_group: str | None = None,
 ) -> dict[str, Any]:
-    """Search the built-in exercise library by name (offline, no API call).
+    """Search the current TrainingPeaks strength exercise library.
+
+    Authenticated calls prefer the live combined library so caller-owned custom
+    exercises appear immediately. If live discovery is unavailable, search
+    falls back to the baked built-in snapshot and reports that custom exercises
+    are unavailable in that result.
 
     Args:
-        query: Substring to match against exercise titles (case-insensitive).
+        query: Substring to match against title/search aliases (case-insensitive).
             Empty query with a muscle_group returns exercises for that muscle.
         limit: Max results (1-100).
         muscle_group: Optional filter on primary/secondary muscle group
             (case-insensitive substring, e.g. "glute", "ham").
 
     Returns:
-        Dict with `count` and `exercises` (id, title, video_url, muscle_groups,
-        and the parameter names the exercise natively prescribes).
+        Dict with source metadata plus `exercises`. Full custom exercise details
+        can be loaded with `tp_get_exercise`.
     """
-    q = (query or "").strip().lower()
-    mg = (muscle_group or "").strip().lower()
+    q = (query or "").strip()
+    mg = (muscle_group or "").strip()
     limit = max(1, min(int(limit or 20), 100))
     if not q and not mg:
         return _err("VALIDATION_ERROR", "Provide a search query or a muscle_group.")
 
-    out: list[dict[str, Any]] = []
-    for ex in _catalogue().values():
-        if q and q not in ex["title"].lower():
-            continue
-        if mg:
-            groups = " ".join(
-                ex.get("primaryMuscleGroups", []) + ex.get("secondaryMuscleGroups", [])
-            ).lower()
-            if mg not in groups:
-                continue
-        out.append(
-            {
-                "id": ex["id"],
-                "title": ex["title"],
-                "video_url": ex.get("videoUrl"),
-                "muscle_groups": ex.get("primaryMuscleGroups", []),
-                "parameters": [p["parameter"] for p in ex.get("parameters", [])],
-            }
-        )
-    # Rank exact / prefix matches first for a name query — BEFORE truncating, so
-    # an exact match that sits past `limit` in catalogue order isn't dropped.
-    if q:
-        out.sort(key=lambda e: (e["title"].lower() != q, not e["title"].lower().startswith(q)))
-    out = out[:limit]
-    return {"count": len(out), "exercises": out}
+    cred = get_credential()
+    if cred.success and cred.cookie:
+        try:
+            async with TPClient() as client:
+                _, access, auth_err = await _access(client)
+                if not auth_err and access:
+                    async with httpx.AsyncClient(timeout=STRENGTH_TIMEOUT) as h:
+                        live = await fetch_live_library_content(access, h)
+                    catalogue = _merge_live_with_baked(live["exercises"])
+                    results = _search_catalogue(catalogue, q, mg, limit, source="live")
+                    return {
+                        "count": len(results),
+                        "source": "live",
+                        "custom_exercises_available": True,
+                        "exercises": results,
+                    }
+        except (httpx.HTTPError, RuntimeError, ValueError):
+            logger.warning(
+                "Live strength exercise library unavailable; using baked fallback",
+                exc_info=True,
+            )
+
+    results = _search_catalogue(_catalogue(), q, mg, limit, source="baked_fallback")
+    return {
+        "count": len(results),
+        "source": "baked_fallback",
+        "custom_exercises_available": False,
+        "exercises": results,
+    }
 
 
 # ── Payload construction ────────────────────────────────────────────────────
 
 
-def _validate_blocks(blocks: list[dict[str, Any]]) -> str | None:
+def _validate_blocks(
+    blocks: list[dict[str, Any]],
+    catalogue: dict[str, dict[str, Any]] | None = None,
+    *,
+    allow_unknown_exercises: bool = False,
+) -> str | None:
     """Return an error string if the blocks are invalid, else None."""
     if not blocks:
         return "At least one block with one exercise is required."
-    catalogue = _catalogue()
+    catalogue = catalogue or _catalogue()
     for bi, block in enumerate(blocks):
         btype = block.get("type", "SingleExercise")
         if btype not in _BLOCK_TYPES:
@@ -189,15 +269,21 @@ def _validate_blocks(blocks: list[dict[str, Any]]) -> str | None:
         set_counts = []
         for ei, ex in enumerate(exercises):
             eid = str(ex.get("id", "")).strip()
-            if eid not in catalogue:
+            if not eid.isdigit() or int(eid) <= 0:
+                return f"block[{bi}].exercise[{ei}] id {eid!r} not in the exercise library."
+            if eid not in catalogue and not allow_unknown_exercises:
                 return f"block[{bi}].exercise[{ei}] id {eid!r} not in the exercise library."
             sets = ex.get("sets") or []
             if not sets:
-                return f"block[{bi}].exercise[{ei}] ({catalogue[eid]['title']}) has no sets."
+                label = (catalogue.get(eid) or {}).get("title") or eid
+                return f"block[{bi}].exercise[{ei}] ({label}) has no sets."
             set_counts.append(len(sets))
             for si, s in enumerate(sets):
                 if not isinstance(s, dict) or not s:
-                    return f"block[{bi}].exercise[{ei}].set[{si}] must be a non-empty map of parameter→value."
+                    return (
+                        f"block[{bi}].exercise[{ei}].set[{si}] must be a non-empty "
+                        "map of parameter→value."
+                    )
                 bad = [p for p in s if p not in _KNOWN_PARAMS]
                 if bad:
                     return (
@@ -210,6 +296,37 @@ def _validate_blocks(blocks: list[dict[str, Any]]) -> str | None:
                 f"exercise (got {set_counts})."
             )
     return None
+
+
+def _missing_exercise_ids(
+    blocks: list[dict[str, Any]],
+    catalogue: dict[str, dict[str, Any]],
+) -> set[str]:
+    return {
+        str(ex.get("id", "")).strip()
+        for block in blocks
+        for ex in (block.get("exercises") or [])
+        if str(ex.get("id", "")).strip() not in catalogue
+    }
+
+
+async def _catalogue_for_blocks(
+    access: str,
+    h: httpx.AsyncClient,
+    blocks: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Resolve custom/new positive exercise ids against the live account library."""
+    baked = _catalogue()
+    if not _missing_exercise_ids(blocks, baked):
+        return baked
+    try:
+        live = await fetch_live_library_content(access, h)
+    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(
+            "TrainingPeaks live exercise library is unavailable; "
+            "custom/new exercise ids cannot be validated"
+        ) from exc
+    return _merge_live_with_baked(live["exercises"])
 
 
 def _u() -> str:
@@ -259,8 +376,9 @@ def _build_payload(
     title: str,
     blocks: list[dict[str, Any]],
     instructions: str | None,
+    catalogue: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    catalogue = _catalogue()
+    catalogue = catalogue or _catalogue()
     blocks_out = []
     total_sets = 0
     for block in blocks:
@@ -365,7 +483,7 @@ async def tp_create_strength_workout(
         return _err("VALIDATION_ERROR", "title is required.")
     if not isinstance(blocks, list):
         return _err("VALIDATION_ERROR", "blocks must be a list.")
-    invalid = _validate_blocks(blocks)
+    invalid = _validate_blocks(blocks, allow_unknown_exercises=True)
     if invalid:
         return _err("VALIDATION_ERROR", invalid)
 
@@ -373,9 +491,23 @@ async def tp_create_strength_workout(
         athlete_id, access, err = await _access(client)
         if err:
             return err
-        payload = _build_payload(athlete_id, date.strip(), title.strip(), blocks, instructions)
         try:
             async with httpx.AsyncClient(timeout=STRENGTH_TIMEOUT) as h:
+                try:
+                    catalogue = await _catalogue_for_blocks(access, h, blocks)
+                except RuntimeError as exc:
+                    return _err("API_ERROR", str(exc))
+                invalid = _validate_blocks(blocks, catalogue)
+                if invalid:
+                    return _err("VALIDATION_ERROR", invalid)
+                payload = _build_payload(
+                    athlete_id,
+                    date.strip(),
+                    title.strip(),
+                    blocks,
+                    instructions,
+                    catalogue,
+                )
                 r = await h.post(
                     f"{STRENGTH_API_BASE}/rx/activity/v1/workouts/save",
                     headers=_headers(access),
@@ -507,7 +639,7 @@ async def tp_update_strength_workout(
     if blocks is not None:
         if not isinstance(blocks, list):
             return _err("VALIDATION_ERROR", "blocks must be a list.")
-        invalid = _validate_blocks(blocks)
+        invalid = _validate_blocks(blocks, allow_unknown_exercises=True)
         if invalid:
             return _err("VALIDATION_ERROR", invalid)
     if blocks is None and title is None and instructions is None and not mark_complete:
@@ -536,7 +668,13 @@ async def tp_update_strength_workout(
                 changed: list[str] = []
 
                 if blocks is not None:
-                    catalogue = _catalogue()
+                    try:
+                        catalogue = await _catalogue_for_blocks(access, h, blocks)
+                    except RuntimeError as exc:
+                        return _err("API_ERROR", str(exc))
+                    invalid = _validate_blocks(blocks, catalogue)
+                    if invalid:
+                        return _err("VALIDATION_ERROR", invalid)
                     new_blocks = [
                         {
                             "id": _u(),

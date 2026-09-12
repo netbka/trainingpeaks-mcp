@@ -23,7 +23,7 @@ Ask your AI assistant things like:
 - "Set my FTP to 310 and update my power zones"
 - "Add a calendar note for next Monday: rest day, travel"
 
-## Tools (84)
+## Tools (87)
 
 ### Workouts
 | Tool | Description |
@@ -132,13 +132,24 @@ honoured exactly. They update a **threshold** (FTP / LTHR / threshold pace).
 ### Strength Workouts
 | Tool | Description |
 |------|-------------|
-| `tp_search_exercises` | Search the built-in strength exercise library by name (offline) |
-| `tp_create_strength_workout` | Create a structured strength/gym workout (blocks of exercises with sets and parameters) |
+| `tp_search_exercises` | Search the live Strength Builder exercise library, including caller-owned custom exercises; falls back to the baked built-in snapshot if live discovery is unavailable |
+| `tp_get_exercise` | Get one strength exercise in full by numeric ID, including instructions, video, native parameters, muscle groups and editability |
+| `tp_create_custom_exercise` | Create a reusable caller-owned custom Strength Builder exercise; TrainingPeaks assigns the permanent numeric ID |
+| `tp_update_custom_exercise` | Update a caller-owned custom exercise; built-in/read-only exercises are rejected |
+| `tp_create_strength_workout` | Create a structured strength/gym workout with built-in or custom exercise IDs, blocks, sets and parameters |
 | `tp_get_strength_summary` | Get a strength workout's compliance summary (blocks/prescriptions/sets completed) |
 | `tp_get_strength_workouts` | List strength/gym workouts in a date range (they don't appear in `tp_get_workouts`) |
 | `tp_get_strength_workout` | Get a strength workout's full detail: blocks, exercises, sets, prescribed vs executed weights |
 | `tp_update_strength_workout` | Update a strength workout in place (replace/append blocks, retitle, mark complete) - preserves Garmin TSS and FIT files, so use this rather than delete-and-recreate on device-synced workouts |
 | `tp_delete_strength_workout` | Delete a strength workout by ID |
+
+Custom exercise discovery and authoring use the current Strength Builder contracts from
+`api.peakswaresb.com`: the combined library comes from `GET /rx/activity/v1/libraryContent`,
+parameter definitions from `GET /rx/activity/v1/parameters/exercise`, and creation is a
+TrainingPeaks-managed two-step `POST /rx/activity/v1/exercises` scaffold followed by a
+full `PUT /rx/activity/v1/exercises`. The connector never invents `ownerId`, parameter IDs
+or permanent exercise IDs. There is intentionally no custom-exercise delete tool until a
+delete contract is verified.
 
 ### Athlete Groups (coach accounts)
 | Tool | Description |
