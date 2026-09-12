@@ -1,7 +1,7 @@
 """Runtime registration for the live/custom Strength Builder exercise tools.
 
 The main MCP server is intentionally kept as the stable registry for the large
-existing tool surface. This narrow installer adds the three new exercise tools
+existing tool surface. This narrow installer adds the live/custom exercise tools
 and updates the existing strength-search description before the CLI starts the
 server. The server callbacks read the module-level TOOLS/handler maps at call
 time, so extending those maps before ``run_server`` is sufficient and avoids a
@@ -14,6 +14,7 @@ from typing import Any
 
 from mcp.types import Tool, ToolAnnotations
 
+from tp_mcp.tools.strength_exercise_list import tp_list_strength_exercises
 from tp_mcp.tools.strength_exercises import (
     tp_create_custom_exercise,
     tp_get_exercise,
@@ -34,7 +35,7 @@ def _tool(
         description=description,
         input_schema={"type": "object", "properties": properties, "required": required},
     )
-    read_only = name.startswith("tp_get_")
+    read_only = name.startswith(("tp_get_", "tp_list_"))
     tool.title = name.removeprefix("tp_").replace("_", " ").capitalize()
     tool.annotations = ToolAnnotations(
         read_only_hint=read_only,
@@ -58,6 +59,17 @@ def install_strength_exercise_tools() -> None:
     # targeted athlete, so these tools intentionally do not receive the server's
     # injected ``athlete`` selector.
     tools = [
+        _tool(
+            "tp_list_strength_exercises",
+            (
+                "List the current TrainingPeaks Strength Builder exercise library "
+                "for the authenticated account, including caller-owned custom "
+                "exercises, muscle groups, block types and current exercise-parameter "
+                "definitions. Live-only: never falls back to the baked snapshot."
+            ),
+            {},
+            [],
+        ),
         _tool(
             "tp_get_exercise",
             (
@@ -155,6 +167,9 @@ def install_strength_exercise_tools() -> None:
         ),
     ]
 
+    async def _h_list(_args: dict[str, Any]):
+        return await tp_list_strength_exercises()
+
     async def _h_get(args: dict[str, Any]):
         return await tp_get_exercise(exercise_id=args["exercise_id"])
 
@@ -180,6 +195,7 @@ def install_strength_exercise_tools() -> None:
         )
 
     handlers = {
+        "tp_list_strength_exercises": _h_list,
         "tp_get_exercise": _h_get,
         "tp_create_custom_exercise": _h_create,
         "tp_update_custom_exercise": _h_update,
