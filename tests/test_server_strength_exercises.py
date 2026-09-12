@@ -30,18 +30,38 @@ def restore_server_registry():
 def test_installer_registers_tools_and_updates_search_description():
     extension.install_strength_exercise_tools()
     names = {tool.name for tool in server.TOOLS}
+    assert "tp_list_strength_exercises" in names
     assert "tp_get_exercise" in names
     assert "tp_create_custom_exercise" in names
     assert "tp_update_custom_exercise" in names
 
+    list_tool = server._TOOLS_BY_NAME["tp_list_strength_exercises"]
     get_tool = server._TOOLS_BY_NAME["tp_get_exercise"]
     create_tool = server._TOOLS_BY_NAME["tp_create_custom_exercise"]
     update_tool = server._TOOLS_BY_NAME["tp_update_custom_exercise"]
+    assert list_tool.annotations.read_only_hint is True
+    assert list_tool.annotations.idempotent_hint is True
     assert get_tool.annotations.read_only_hint is True
     assert create_tool.annotations.read_only_hint is False
     assert create_tool.annotations.idempotent_hint is False
     assert update_tool.annotations.idempotent_hint is True
     assert "live" in server._TOOLS_BY_NAME["tp_search_exercises"].description.lower()
+
+
+@pytest.mark.asyncio
+async def test_registered_list_tool_dispatches_without_athlete_parameter():
+    extension.install_strength_exercise_tools()
+    tool = server._TOOLS_BY_NAME["tp_list_strength_exercises"]
+    assert "athlete" not in tool.input_schema["properties"]
+    assert tool.input_schema["required"] == []
+
+    mocked = AsyncMock(return_value={"count": 1, "exercises": [{"exercise_id": "628875"}]})
+    with patch("tp_mcp.server_strength_exercises.tp_list_strength_exercises", new=mocked):
+        result = await server.call_tool("tp_list_strength_exercises", {})
+
+    payload = json.loads(result[0].text)
+    assert payload["count"] == 1
+    mocked.assert_awaited_once()
 
 
 @pytest.mark.asyncio
