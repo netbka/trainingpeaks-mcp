@@ -28,6 +28,7 @@ from tp_mcp.tools.events import (
     tp_update_note,
 )
 from tp_mcp.tools.fitness import tp_get_fitness
+from tp_mcp.tools.generate import tp_ai_generate_workout
 from tp_mcp.tools.groups import (
     tp_add_athletes_to_group,
     tp_create_group,
@@ -108,6 +109,7 @@ from tp_mcp.tools.zone_methods import tp_get_zone_methods
 
 __all__ = [
     "tp_add_note_comment",
+    "tp_ai_generate_workout",
     "tp_add_workout_comment",
     "tp_analyze_workout",
     "tp_auth_status",

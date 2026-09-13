@@ -23,6 +23,7 @@ Ask your AI assistant things like:
 - "Set my FTP to 310 and update my power zones"
 - "Add a calendar note for next Monday: rest day, travel"
 
+## Tools (86)
 ## Tools (87)
 
 ### Workouts
@@ -50,6 +51,7 @@ Ask your AI assistant things like:
 | Tool | Description |
 |------|-------------|
 | `tp_analyze_workout` | Detailed analysis with time-series data, zones, and laps |
+| `tp_ai_generate_workout` | Generate a structured workout from a natural-language description (pure generator: never creates, schedules, or modifies a workout) |
 | `tp_get_peaks` | Power PRs (5s-90min) and running PRs (400m-marathon) |
 | `tp_get_workout_prs` | PRs set during a specific session |
 | `tp_get_fitness` | CTL, ATL, and TSB trend (fitness, fatigue, form) |
