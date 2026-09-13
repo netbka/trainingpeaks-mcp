@@ -1426,7 +1426,9 @@ TOOLS = [
     Tool(
         name="tp_list_groups",
         description="List the coach's athlete groups (TP exposes these as tags). "
-                    "Returns id, name, athlete_count, is_default.",
+                    "Returns id, name, athlete_count, is_default, plus an additive "
+                    "feed payload (group_id, totalHits, hits) for the default group "
+                    "or TP_COACH_FEED_GROUP_ID when set.",
         input_schema={
             "type": "object",
             "properties": {},
