@@ -3,6 +3,7 @@
 from tp_mcp.tools.analyze import tp_analyze_workout
 from tp_mcp.tools.atp import tp_get_atp
 from tp_mcp.tools.auth_status import tp_auth_status
+from tp_mcp.tools.coach_feed import tp_list_groups
 from tp_mcp.tools.equipment import (
     tp_create_equipment,
     tp_delete_equipment,
@@ -34,7 +35,6 @@ from tp_mcp.tools.groups import (
     tp_create_group,
     tp_delete_group,
     tp_list_athletes_in_group,
-    tp_list_groups,
     tp_remove_athletes_from_group,
     tp_rename_group,
 )
