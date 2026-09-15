@@ -1,4 +1,4 @@
-"""Tests for athlete group (tag) read tools — issue #69."""
+"""Tests for athlete group tag tools."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -23,14 +23,6 @@ TAGS = [
      "athleteIds": [201, 202, 203], "isDefault": True},
 ]
 
-FEED_PAYLOAD = {
-    "totalHits": 2,
-    "hits": [
-        {"userAction": {"uniqueId": "a1", "date": "2026-09-13T10:00:00Z", "type": "upload"}},
-        {"userAction": {"uniqueId": "a0", "date": "2026-09-12T10:00:00Z", "type": "comment"}},
-    ],
-}
-
 
 def _client(**methods):
     inst = AsyncMock()
@@ -46,27 +38,25 @@ def _patch(monkeypatch_target, instance):
     return p
 
 
-# ── tp_list_groups ───────────────────────────────────────────────────────────
-
 @pytest.mark.asyncio
 async def test_list_groups_ok():
-    inst = _client(_get_user_data=USER)
-    inst.get = AsyncMock(side_effect=[
-        APIResponse(success=True, data=TAGS),
-        APIResponse(success=True, data=FEED_PAYLOAD),
-    ])
+    inst = _client(
+        _get_user_data=USER,
+        get=APIResponse(success=True, data=TAGS),
+    )
     with patch("tp_mcp.tools.groups.TPClient") as mc:
         mc.return_value.__aenter__.return_value = inst
         out = await tp_list_groups()
+
     assert out["count"] == 2
-    a = next(g for g in out["groups"] if g["id"] == 11)
-    assert a == {"id": 11, "name": "Group A", "athlete_count": 2, "is_default": False}
-    default = next(g for g in out["groups"] if g["id"] == 12)
-    assert default["is_default"] is True
-    # coach-scoped tags endpoint, then the default group's feed
-    inst.get.assert_any_await("/coaches/v2/coaches/1135463/tags")
-    inst.get.assert_any_await("/fitness/v1/coaches/1135463/athletegroups/12/feed")
-    assert out["feed"] == {"group_id": 12, "totalHits": 2, "hits": FEED_PAYLOAD["hits"]}
+    assert out["groups"][0] == {
+        "id": 11,
+        "name": "Group A",
+        "athlete_count": 2,
+        "athlete_ids": [202, 201],
+        "is_default": False,
+    }
+    inst.get.assert_awaited_once_with("/coaches/v2/coaches/1135463/tags")
 
 
 @pytest.mark.asyncio
@@ -89,47 +79,6 @@ async def test_list_groups_api_error():
         mc.return_value.__aenter__.return_value = inst
         out = await tp_list_groups()
     assert out["isError"] is True
-
-
-@pytest.mark.asyncio
-async def test_list_groups_no_default_group_omits_feed():
-    tags_no_default = [{"id": 11, "coachId": 1135463, "name": "Group A",
-                         "athleteIds": [201], "isDefault": False}]
-    inst = _client(_get_user_data=USER, get=APIResponse(success=True, data=tags_no_default))
-    with patch("tp_mcp.tools.groups.TPClient") as mc:
-        mc.return_value.__aenter__.return_value = inst
-        out = await tp_list_groups()
-    assert "feed" not in out
-    inst.get.assert_awaited_once_with("/coaches/v2/coaches/1135463/tags")
-
-
-@pytest.mark.asyncio
-async def test_list_groups_feed_error_is_additive_not_fatal():
-    inst = _client(_get_user_data=USER)
-    inst.get = AsyncMock(side_effect=[
-        APIResponse(success=True, data=TAGS),
-        APIResponse(success=False, message="feed boom"),
-    ])
-    with patch("tp_mcp.tools.groups.TPClient") as mc:
-        mc.return_value.__aenter__.return_value = inst
-        out = await tp_list_groups()
-    assert out["count"] == 2
-    assert out["feed"]["isError"] is True
-
-
-@pytest.mark.asyncio
-async def test_list_groups_feed_group_id_override(monkeypatch):
-    monkeypatch.setenv("TP_COACH_FEED_GROUP_ID", "11")
-    inst = _client(_get_user_data=USER)
-    inst.get = AsyncMock(side_effect=[
-        APIResponse(success=True, data=TAGS),
-        APIResponse(success=True, data=FEED_PAYLOAD),
-    ])
-    with patch("tp_mcp.tools.groups.TPClient") as mc:
-        mc.return_value.__aenter__.return_value = inst
-        out = await tp_list_groups()
-    inst.get.assert_any_await("/fitness/v1/coaches/1135463/athletegroups/11/feed")
-    assert out["feed"]["group_id"] == 11
 
 
 # ── tp_list_athletes_in_group ────────────────────────────────────────────────
