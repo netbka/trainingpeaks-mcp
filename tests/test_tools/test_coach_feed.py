@@ -83,3 +83,35 @@ async def test_one_feed_failure_does_not_hide_other_groups():
     assert out["feeds"][0]["group_id"] == 11
     assert out["feeds"][1]["group_id"] == 12
     assert out["feed"]["group_id"] == 12
+
+
+@pytest.mark.asyncio
+async def test_incomplete_feed_is_failed_closed_instead_of_losing_events():
+    inst = AsyncMock()
+    inst._get_user_data = AsyncMock(return_value=USER)
+    inst.get = AsyncMock(
+        side_effect=[
+            APIResponse(
+                success=True,
+                data={
+                    "totalHits": 3,
+                    "hits": [
+                        {"userAction": {"uniqueId": "only-one", "date": "2026-09-13T11:28:09Z"}}
+                    ],
+                    "statuses": [],
+                },
+            ),
+            response("complete"),
+        ]
+    )
+    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)):
+        with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
+            mc.return_value.__aenter__.return_value = inst
+            out = await tp_list_groups()
+
+    incomplete = out["feeds"][0]
+    assert incomplete["isError"] is True
+    assert incomplete["error_code"] == "FEED_INCOMPLETE"
+    assert incomplete["totalHits"] == 3
+    assert incomplete["returnedHits"] == 1
+    assert out["feeds"][1]["group_id"] == 12
