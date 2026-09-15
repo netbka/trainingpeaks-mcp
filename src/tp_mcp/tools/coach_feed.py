@@ -46,9 +46,23 @@ async def _fetch_feed(
         payload.get("statuses") if isinstance(payload.get("statuses"), list) else []
     )
     total_hits = payload.get("totalHits")
+    total_hits = total_hits if isinstance(total_hits, int) else len(hits)
+    if total_hits > len(hits):
+        return {
+            "group_id": group_id,
+            "isError": True,
+            "error_code": "FEED_INCOMPLETE",
+            "message": (
+                f"TrainingPeaks reported {total_hits} feed hits but returned "
+                f"only {len(hits)}. The response is not committed so no "
+                "events are silently lost."
+            ),
+            "totalHits": total_hits,
+            "returnedHits": len(hits),
+        }
     return {
         "group_id": group_id,
-        "totalHits": total_hits if isinstance(total_hits, int) else len(hits),
+        "totalHits": total_hits,
         "hits": hits,
         "statuses": statuses,
     }
