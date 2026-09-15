@@ -156,7 +156,7 @@ delete contract is verified.
 ### Athlete Groups (coach accounts)
 | Tool | Description |
 |------|-------------|
-| `tp_list_groups` | List the coach's athlete groups (TP tags) |
+| `tp_list_groups` | List current coach groups with exact membership and every non-empty group's feed |
 | `tp_list_athletes_in_group` | List the athletes in one group, with names resolved from the roster |
 | `tp_create_group` | Create a new athlete group |
 | `tp_rename_group` | Rename an athlete group (default group cannot be renamed) |
