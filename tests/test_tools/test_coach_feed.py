@@ -1,4 +1,4 @@
-"""Tests for the coach-scoped TrainingPeaks activity feed wrapper."""
+"""Tests for dynamic coach-scoped TrainingPeaks group feeds."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -9,92 +9,77 @@ from tp_mcp.tools.coach_feed import tp_list_groups
 
 GROUPS = {
     "groups": [
-        {"id": 11, "name": "Group A", "athlete_count": 2, "is_default": False},
-        {"id": 12, "name": "My Athletes", "athlete_count": 3, "is_default": True},
+        {"id": 11, "name": "Group A", "athlete_count": 2, "athlete_ids": [1, 2], "is_default": False},
+        {"id": 12, "name": "My Athletes", "athlete_count": 1, "athlete_ids": [3], "is_default": True},
+        {"id": 13, "name": "Empty", "athlete_count": 0, "athlete_ids": [], "is_default": False},
     ],
-    "count": 2,
+    "count": 3,
 }
 USER = {"personId": 1135463}
-FEED = {
-    "totalHits": 2,
-    "hits": [
-        {"userAction": {"uniqueId": "new", "date": "2026-09-13T11:28:09Z"}},
-        {"userAction": {"uniqueId": "old", "date": "2026-09-13T10:00:00Z"}},
-    ],
-    "statuses": [],
-}
 
 
-def _client(**methods):
+def response(unique_id: str) -> APIResponse:
+    return APIResponse(
+        success=True,
+        data={
+            "totalHits": 1,
+            "hits": [{"userAction": {"uniqueId": unique_id, "date": "2026-09-13T11:28:09Z"}}],
+            "statuses": [],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_groups_fetches_every_non_empty_group_after_group_discovery():
     inst = AsyncMock()
-    for name, value in methods.items():
-        setattr(inst, name, AsyncMock(return_value=value))
-    return inst
-
-
-@pytest.mark.asyncio
-async def test_list_groups_enriches_default_group_with_feed(monkeypatch):
-    monkeypatch.delenv("TP_COACH_FEED_GROUP_ID", raising=False)
-    inst = _client(
-        _get_user_data=USER,
-        get=APIResponse(success=True, data=FEED),
-    )
-    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)):
+    inst._get_user_data = AsyncMock(return_value=USER)
+    inst.get = AsyncMock(side_effect=[response("a"), response("b")])
+    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)) as list_groups:
         with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
             mc.return_value.__aenter__.return_value = inst
             out = await tp_list_groups()
 
+    list_groups.assert_awaited_once()
     assert out["groups"] == GROUPS["groups"]
+    assert out["coach_id"] == 1135463
+    assert [feed["group_id"] for feed in out["feeds"]] == [11, 12]
     assert out["feed"]["group_id"] == 12
-    assert out["feed"]["totalHits"] == 2
-    assert [h["userAction"]["uniqueId"] for h in out["feed"]["hits"]] == ["new", "old"]
-    inst.get.assert_awaited_once_with(
-        "/fitness/v1/coaches/1135463/athletegroups/12/feed"
-    )
+    assert inst.get.await_count == 2
+    inst.get.assert_any_await("/fitness/v1/coaches/1135463/athletegroups/11/feed")
+    inst.get.assert_any_await("/fitness/v1/coaches/1135463/athletegroups/12/feed")
 
 
 @pytest.mark.asyncio
-async def test_list_groups_uses_configured_feed_group(monkeypatch):
-    monkeypatch.setenv("TP_COACH_FEED_GROUP_ID", "11")
-    inst = _client(
-        _get_user_data=USER,
-        get=APIResponse(success=True, data=FEED),
+async def test_list_groups_skips_empty_groups():
+    inst = AsyncMock()
+    inst._get_user_data = AsyncMock(return_value=USER)
+    inst.get = AsyncMock()
+    only_empty = {"groups": [GROUPS["groups"][2]], "count": 1}
+    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=only_empty)):
+        with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
+            mc.return_value.__aenter__.return_value = inst
+            out = await tp_list_groups()
+
+    assert out["feeds"] == []
+    inst.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_one_feed_failure_does_not_hide_other_groups():
+    inst = AsyncMock()
+    inst._get_user_data = AsyncMock(return_value=USER)
+    inst.get = AsyncMock(
+        side_effect=[
+            APIResponse(success=False, message="unavailable"),
+            response("ok"),
+        ]
     )
     with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)):
         with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
             mc.return_value.__aenter__.return_value = inst
             out = await tp_list_groups()
 
-    assert out["feed"]["group_id"] == 11
-    inst.get.assert_awaited_once_with(
-        "/fitness/v1/coaches/1135463/athletegroups/11/feed"
-    )
-
-
-@pytest.mark.asyncio
-async def test_list_groups_reports_missing_configured_group_without_api_call(monkeypatch):
-    monkeypatch.setenv("TP_COACH_FEED_GROUP_ID", "999")
-    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)):
-        with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
-            out = await tp_list_groups()
-
-    assert out["feed"]["isError"] is True
-    assert out["feed"]["error_code"] == "FEED_GROUP_NOT_FOUND"
-    mc.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_list_groups_preserves_group_result_when_feed_api_fails(monkeypatch):
-    monkeypatch.delenv("TP_COACH_FEED_GROUP_ID", raising=False)
-    inst = _client(
-        _get_user_data=USER,
-        get=APIResponse(success=False, message="feed unavailable"),
-    )
-    with patch("tp_mcp.tools.coach_feed._tp_list_groups", AsyncMock(return_value=GROUPS)):
-        with patch("tp_mcp.tools.coach_feed.TPClient") as mc:
-            mc.return_value.__aenter__.return_value = inst
-            out = await tp_list_groups()
-
-    assert out["groups"] == GROUPS["groups"]
-    assert out["feed"]["isError"] is True
+    assert out["feeds"][0]["isError"] is True
+    assert out["feeds"][0]["group_id"] == 11
+    assert out["feeds"][1]["group_id"] == 12
     assert out["feed"]["group_id"] == 12
