@@ -73,6 +73,7 @@ def _slim_group(tag: dict[str, Any]) -> dict[str, Any]:
         "id": tag.get("id"),
         "name": tag.get("name", ""),
         "athlete_count": len(tag.get("athleteIds") or []),
+        "athlete_ids": list(tag.get("athleteIds") or []),
         "is_default": tag.get("isDefault", False),
     }
 
