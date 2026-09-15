@@ -31,13 +31,10 @@ membership endpoints above. The default group's membership is managed by TP and
 is not edited here.
 """
 
-import logging
-import os
 from typing import Any
 
 from tp_mcp.client import TPClient
 
-logger = logging.getLogger("tp-mcp")
 
 _TAGS_ENDPOINT = "/coaches/v2/coaches/{coach_id}/tags"        # read
 _TAGS_WRITE = "/coaches/v1/coaches/{coach_id}/tags"          # create
@@ -46,13 +43,6 @@ _TAG_WRITE = "/coaches/v1/coaches/{coach_id}/tags/{tag_id}"  # rename / delete
 # .../athletes/{athleteId}. One athlete per call (verified live).
 _TAG_ATHLETES = "/coaches/v1/coaches/{coach_id}/tags/{tag_id}/athletes"
 _TAG_ATHLETE = "/coaches/v1/coaches/{coach_id}/tags/{tag_id}/athletes/{athlete_id}"
-
-# The coach "Feed" widget on the TrainingPeaks web app — activity/comment/upload
-# events across one athlete group. Same shape the web app itself reads; verified
-# live against the default group. Optional: set TP_COACH_FEED_GROUP_ID to read a
-# different group's feed (see /fitness/v1/coaches/<coach>/athletegroups/<id>/feed
-# in the browser network tab); unset uses the coach's default group.
-_FEED_ENDPOINT = "/fitness/v1/coaches/{coach_id}/athletegroups/{group_id}/feed"
 
 
 async def _coach_id(client: TPClient) -> int | None:
@@ -78,54 +68,8 @@ def _slim_group(tag: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _feed_group_id(groups: list[dict[str, Any]]) -> int | None:
-    """Resolve which group's feed to read: TP_COACH_FEED_GROUP_ID env override,
-    else the roster's default group, else None (no feed attached)."""
-    override = os.environ.get("TP_COACH_FEED_GROUP_ID", "").strip()
-    if override:
-        try:
-            return int(override)
-        except ValueError:
-            logger.warning("TP_COACH_FEED_GROUP_ID=%r is not a valid group id; ignoring", override)
-    default = next((g["id"] for g in groups if g.get("is_default")), None)
-    return default
-
-
-async def _fetch_coach_feed(client: TPClient, coach_id: int, group_id: int) -> dict[str, Any]:
-    """Fetch the coach Feed widget payload for one athlete group.
-
-    Returns a dict shaped ``{group_id, totalHits, hits}`` on success, or an
-    ``isError`` envelope on failure — never raises, so a feed problem never
-    fails the whole ``tp_list_groups`` call.
-    """
-    response = await client.get(_FEED_ENDPOINT.format(coach_id=coach_id, group_id=group_id))
-    if response.is_error:
-        return {
-            "isError": True,
-            "error_code": response.error_code.value if response.error_code else "API_ERROR",
-            "message": response.message,
-        }
-
-    data = response.data if isinstance(response.data, dict) else {}
-    hits = data.get("hits")
-    if not isinstance(hits, list):
-        hits = []
-    total_hits = data.get("totalHits")
-    if not isinstance(total_hits, int):
-        total_hits = len(hits)
-
-    return {"group_id": group_id, "totalHits": total_hits, "hits": hits}
-
-
 async def tp_list_groups() -> dict[str, Any]:
-    """List the coach's athlete groups (TP tags), with the coach Feed attached.
-
-    Returns:
-        Dict with a ``groups`` list of ``{id, name, athlete_count, is_default}``
-        and an additive ``feed`` payload (``{group_id, totalHits, hits}``) for
-        the default group, or ``TP_COACH_FEED_GROUP_ID`` when set. ``feed`` is
-        omitted only when no group could be resolved (empty roster).
-    """
+    """List all coach athlete groups with their exact current membership."""
     async with TPClient() as client:
         coach_id = await _coach_id(client)
         if not coach_id:
@@ -144,14 +88,8 @@ async def tp_list_groups() -> dict[str, Any]:
             }
 
         data = response.data if isinstance(response.data, list) else []
-        groups = [_slim_group(t) for t in data if isinstance(t, dict)]
-        result: dict[str, Any] = {"groups": groups, "count": len(groups)}
-
-        feed_group_id = _feed_group_id(groups)
-        if feed_group_id is not None:
-            result["feed"] = await _fetch_coach_feed(client, coach_id, feed_group_id)
-
-        return result
+        groups = [_slim_group(tag) for tag in data if isinstance(tag, dict)]
+        return {"groups": groups, "count": len(groups)}
 
 
 async def tp_list_athletes_in_group(group_id: str) -> dict[str, Any]:
