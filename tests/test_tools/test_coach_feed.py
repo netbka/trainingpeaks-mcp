@@ -86,7 +86,12 @@ async def test_one_feed_failure_does_not_hide_other_groups():
 
 
 @pytest.mark.asyncio
-async def test_incomplete_feed_is_failed_closed_instead_of_losing_events():
+async def test_feed_narrower_than_total_hits_is_still_committed():
+    # The feed endpoint is a recency window, not a paginated full history:
+    # totalHits routinely exceeds the returned hits even for quiet groups, so
+    # a mismatch is not a completeness failure - see coach_feed.py's
+    # 2026-09-20 note. The returned hits are genuine data and must be
+    # committed, just flagged as `truncated` for observability.
     inst = AsyncMock()
     inst._get_user_data = AsyncMock(return_value=USER)
     inst.get = AsyncMock(
@@ -109,9 +114,10 @@ async def test_incomplete_feed_is_failed_closed_instead_of_losing_events():
             mc.return_value.__aenter__.return_value = inst
             out = await tp_list_groups()
 
-    incomplete = out["feeds"][0]
-    assert incomplete["isError"] is True
-    assert incomplete["error_code"] == "FEED_INCOMPLETE"
-    assert incomplete["totalHits"] == 3
-    assert incomplete["returnedHits"] == 1
+    narrow = out["feeds"][0]
+    assert narrow.get("isError") is not True
+    assert narrow["totalHits"] == 3
+    assert len(narrow["hits"]) == 1
+    assert narrow["truncated"] is True
     assert out["feeds"][1]["group_id"] == 12
+    assert out["feeds"][1]["truncated"] is False
