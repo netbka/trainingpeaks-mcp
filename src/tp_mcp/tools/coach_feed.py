@@ -8,10 +8,13 @@ not to an athlete profile, and is returned additively for EZRUN reconciliation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from tp_mcp.client import TPClient
 from tp_mcp.tools.groups import tp_list_groups as _tp_list_groups
+
+logger = logging.getLogger("tp-mcp")
 
 _FEED_ENDPOINT = "/fitness/v1/coaches/{coach_id}/athletegroups/{group_id}/feed"
 
@@ -47,24 +50,38 @@ async def _fetch_feed(
     )
     total_hits = payload.get("totalHits")
     total_hits = total_hits if isinstance(total_hits, int) else len(hits)
-    if total_hits > len(hits):
-        return {
-            "group_id": group_id,
-            "isError": True,
-            "error_code": "FEED_INCOMPLETE",
-            "message": (
-                f"TrainingPeaks reported {total_hits} feed hits but returned "
-                f"only {len(hits)}. The response is not committed so no "
-                "events are silently lost."
-            ),
-            "totalHits": total_hits,
-            "returnedHits": len(hits),
-        }
+    # This endpoint is a recency window, not a paginated full history: live
+    # verification (2026-09-20) confirmed no query parameter (numResults,
+    # pageSize, limit, take, maxResults, page) changes how many hits come
+    # back, and the hits that DO come back are already sorted newest-first
+    # covering the last several days. totalHits consistently exceeds len(hits)
+    # even for small/quiet groups, so it counts something other than "items
+    # available in this response" - it is not a completeness signal for this
+    # call. Failing the whole group closed on totalHits > len(hits) (added
+    # 2026-09-15 as a defensive guard against silent loss) turned into a
+    # permanent block once totalHits started regularly exceeding the window:
+    # every group failed every cycle from then on, so the fast incremental
+    # path never delivered a single event, and EZRUN's completed-workout
+    # sync silently stalled. The real correctness backstop for anything
+    # older than this window is the separate 45-day reconciliation
+    # revalidation loop, not this endpoint. So: commit the returned hits
+    # (they are genuine, ordered, recent data) and just flag the mismatch
+    # for observability instead of discarding them.
+    truncated = total_hits > len(hits)
+    if truncated:
+        logger.info(
+            "TrainingPeaks feed for group %s reported totalHits=%s but "
+            "returned %s hits; committing the returned recency window as-is.",
+            group_id,
+            total_hits,
+            len(hits),
+        )
     return {
         "group_id": group_id,
         "totalHits": total_hits,
         "hits": hits,
         "statuses": statuses,
+        "truncated": truncated,
     }
 
 
