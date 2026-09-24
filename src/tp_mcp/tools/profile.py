@@ -271,7 +271,7 @@ async def tp_get_athlete_by_email(email: str) -> dict[str, Any]:
 
         person_id = user_data.get("personId")
         coach_email = (user_data.get("email") or "").strip().lower()
-        athletes = user_data.get("athletes", [])
+        athletes = user_data.get("athletes", []) or []
         matches = [
             a for a in athletes
             if isinstance(a, dict)
