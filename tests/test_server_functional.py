@@ -99,6 +99,7 @@ class TestListTools:
             "tp_update_library_item",
             "tp_schedule_library_workout",
             "tp_list_athletes",
+            "tp_get_athlete_by_email",
             "tp_list_groups",
             "tp_list_athletes_in_group",
             "tp_create_group",
