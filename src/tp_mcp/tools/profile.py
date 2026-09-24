@@ -190,8 +190,8 @@ async def tp_get_profile() -> dict[str, Any]:
 async def tp_list_athletes() -> dict[str, Any]:
     """List athletes available to this account (coach accounts).
 
-    Each entry carries ``athlete_id``, ``name``, ``is_self`` plus an ``account``
-    sub-dict. The most useful key there is ``tier`` — one of
+    Each entry carries ``athlete_id``, ``name``, ``email``, ``is_self``
+    plus an ``account`` sub-dict. The most useful key there is ``tier`` — one of
     ``premium_self`` / ``premium_coach`` / ``premium_trial`` / ``basic`` —
     matching the «Account Type» label in the TP UI (derivation verified live
     against athletes from each state). Raw underlying fields are kept alongside
@@ -231,8 +231,77 @@ async def tp_list_athletes() -> dict[str, Any]:
             result.append({
                 "athlete_id": a.get("athleteId"),
                 "name": f"{first} {last}".strip(),
+                "email": a.get("email"),
                 "is_self": is_self,
                 "account": _account_fields(a),
             })
 
         return {"athletes": result}
+
+
+async def tp_get_athlete_by_email(email: str) -> dict[str, Any]:
+    """Find one athlete in the current coach roster by exact email.
+
+    This is intentionally a roster reconciliation read, not an account lookup
+    against TrainingPeaks' global user database. It is useful after a coached
+    athlete has been created or invited: once the athlete appears in the
+    caller's roster, this returns the stable TrainingPeaks athlete id without
+    guessing from display name.
+
+    Email comparison is case-insensitive and trims surrounding whitespace.
+    Zero matches is an ordinary ``found=false`` result. Multiple matches are
+    reported as AMBIGUOUS and are never resolved by picking one.
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return {
+            "isError": True,
+            "error_code": "VALIDATION_ERROR",
+            "message": "email must not be empty.",
+        }
+
+    async with TPClient() as client:
+        user_data = await client._get_user_data()
+        if not user_data:
+            return {
+                "isError": True,
+                "error_code": "API_ERROR",
+                "message": "Could not retrieve user data.",
+            }
+
+        person_id = user_data.get("personId")
+        coach_email = (user_data.get("email") or "").strip().lower()
+        athletes = user_data.get("athletes", [])
+        matches = [
+            a for a in athletes
+            if isinstance(a, dict)
+            and (a.get("email") or "").strip().lower() == target
+        ]
+
+        if not matches:
+            return {"found": False, "email": email.strip()}
+
+        if len(matches) > 1:
+            return {
+                "isError": True,
+                "error_code": "AMBIGUOUS",
+                "message": "More than one roster athlete has this email.",
+                "match_count": len(matches),
+            }
+
+        entry = matches[0]
+        first = entry.get("firstName", "")
+        last = entry.get("lastName", "")
+        athlete_email = (entry.get("email") or "").strip()
+        is_self = (
+            entry.get("coachedBy") == person_id
+            and athlete_email.lower() == coach_email
+        )
+        return {
+            "found": True,
+            "athlete_id": entry.get("athleteId"),
+            "name": f"{first} {last}".strip(),
+            "email": entry.get("email"),
+            "is_self": is_self,
+            "account": _account_fields(entry),
+        }
