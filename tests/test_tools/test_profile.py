@@ -9,6 +9,7 @@ from tp_mcp.client.http import APIResponse
 from tp_mcp.tools.profile import (
     _account_fields,
     _derive_tier,
+    tp_get_athlete_by_email,
     tp_get_profile,
     tp_list_athletes,
 )
@@ -227,6 +228,8 @@ class TestListAthletesShape:
         assert len(result["athletes"]) == 2
         coach, charlotte = result["athletes"]
         assert coach["is_self"] is True and coach["athlete_id"] == 100
+        assert coach["email"] == "stevan@example.com"
+        assert charlotte["email"] == "charlotte@example.com"
         # account block carries the raw fields + the derived tier
         assert coach["account"]["athlete_type"] == 1
         assert coach["account"]["expired"] is False     # future expireOn
@@ -234,3 +237,59 @@ class TestListAthletesShape:
         assert charlotte["account"]["athlete_type"] == 4
         assert charlotte["account"]["expired"] is True   # 2017
         assert charlotte["account"]["tier"] == "basic"
+
+
+
+class TestGetAthleteByEmail:
+    @pytest.mark.asyncio
+    async def test_finds_roster_athlete_case_insensitively(self):
+        instance = _mock_client(
+            _get_user_data={"personId": 100, "email": "stevan@example.com",
+                            "athletes": ROSTER},
+        )
+        with patch("tp_mcp.tools.profile.TPClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value = instance
+            result = await tp_get_athlete_by_email("  CHARLOTTE@example.com ")
+
+        assert result["found"] is True
+        assert result["athlete_id"] == 201
+        assert result["name"] == "Charlotte Horton"
+        assert result["email"] == "charlotte@example.com"
+        assert result["is_self"] is False
+        assert result["account"]["tier"] == "basic"
+
+    @pytest.mark.asyncio
+    async def test_returns_found_false_when_email_is_not_in_roster(self):
+        instance = _mock_client(
+            _get_user_data={"personId": 100, "email": "stevan@example.com",
+                            "athletes": ROSTER},
+        )
+        with patch("tp_mcp.tools.profile.TPClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value = instance
+            result = await tp_get_athlete_by_email("new@example.com")
+
+        assert result == {"found": False, "email": "new@example.com"}
+
+    @pytest.mark.asyncio
+    async def test_never_picks_one_when_email_is_ambiguous(self):
+        duplicate = dict(ROSTER[1], athleteId=202)
+        instance = _mock_client(
+            _get_user_data={"personId": 100, "email": "stevan@example.com",
+                            "athletes": [*ROSTER, duplicate]},
+        )
+        with patch("tp_mcp.tools.profile.TPClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value = instance
+            result = await tp_get_athlete_by_email("charlotte@example.com")
+
+        assert result["isError"] is True
+        assert result["error_code"] == "AMBIGUOUS"
+        assert result["match_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_email_without_calling_trainingpeaks(self):
+        with patch("tp_mcp.tools.profile.TPClient") as mock_client:
+            result = await tp_get_athlete_by_email("   ")
+
+        assert result["isError"] is True
+        assert result["error_code"] == "VALIDATION_ERROR"
+        mock_client.assert_not_called()
