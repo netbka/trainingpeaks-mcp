@@ -130,6 +130,22 @@ class TestListTools:
         assert len(names) == len(core_tools) + len(v2_tools)
 
     @pytest.mark.asyncio
+    async def test_roster_email_lookup_dispatches_as_read_only_coach_tool(self):
+        with patch(
+            "tp_mcp.server.tp_get_athlete_by_email",
+            new=AsyncMock(return_value={"found": True, "athlete_id": 201}),
+        ) as lookup:
+            result = _parse_result(
+                await call_tool(
+                    "tp_get_athlete_by_email",
+                    {"email": "athlete@example.com"},
+                )
+            )
+
+        assert result == {"found": True, "athlete_id": 201}
+        lookup.assert_awaited_once_with(email="athlete@example.com")
+
+    @pytest.mark.asyncio
     async def test_create_workout_schema_includes_new_fields(self):
         """The tp_create_workout schema should advertise optional structured_workout support."""
         tools = await list_tools()
