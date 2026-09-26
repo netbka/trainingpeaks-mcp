@@ -1,5 +1,6 @@
 """Tests for structured strength workout tools."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -419,6 +420,116 @@ class TestListAndDetail:
                 mh.return_value.__aenter__.return_value = http
                 r = await tp_get_strength_workout(workout_id="999")
         assert r["error_code"] == "NOT_FOUND"
+
+
+# ── Execution evidence contract (shapes read live 2026-09-25) ────────────────
+
+
+def _device_only_detail():
+    """A Garmin strength session TrainingPeaks filed with no blocks."""
+    return {
+        "id": "30557969", "calendarId": TEST_ATHLETE_ID, "workoutType": "StructuredStrength",
+        "title": "Strength", "prescribedDate": "2026-09-16", "instructions": None,
+        "prescribedDurationInSeconds": None, "executedDurationInSeconds": 2859,
+        "complianceState": "Unplanned", "compliancePercent": None, "rpe": None, "feel": None,
+        "completionSource": "DeviceFile", "startDateTime": "2026-09-16T18:56:14",
+        "completedDateTime": "2026-09-16T19:43:53", "completedTss": 35.0,
+        "completedTssSource": "HeartRateTss", "completedIntensityFactor": 0.63,
+        "orderOnDay": None, "workoutSubTypeId": None, "lastUpdatedAt": "2026-09-16T16:45:34",
+        "files": [{"deviceFileStorageKey": "tp-1/2026-09-16/secret-key", "fileName": "tp-1.GarminPing.fit",
+                   "isGarmin": True, "deviceMake": "Garmin", "deviceModel": "Forerunner",
+                   "dateUploaded": "2026-09-16T16:45:34", "uploadClient": "GarminPing"}],
+        "snapshot": {"totalBlocks": 0, "completedBlocks": 0, "totalSets": 0, "completedSets": 0},
+        "blocks": [],
+    }
+
+
+class TestExecutionEvidenceContract:
+    def test_detail_exposes_device_execution_evidence(self):
+        out = _fmt_workout_detail(_device_only_detail())
+        assert out["completion_source"] == "DeviceFile"
+        assert out["start_datetime"] == "2026-09-16T18:56:14"
+        assert out["completed_datetime"] == "2026-09-16T19:43:53"
+        assert out["executed_duration_sec"] == 2859
+        assert out["executed_duration_min"] == 47.6
+        assert out["completed_tss"] == 35.0
+        assert out["completed_tss_source"] == "HeartRateTss"
+        assert out["completed_intensity_factor"] == 0.63
+        assert out["last_updated_at"] == "2026-09-16T16:45:34"
+        assert out["device_files"] == [{
+            "file_name": "tp-1.GarminPing.fit", "is_garmin": True, "device_make": "Garmin",
+            "device_model": "Forerunner", "uploaded_at": "2026-09-16T16:45:34",
+        }]
+        assert "secret-key" not in json.dumps(out)
+        assert out["blocks"] == []
+
+    def test_detail_without_evidence_fields_stays_null(self):
+        out = _fmt_workout_detail({"id": "1", "blocks": [], "snapshot": {}})
+        assert out["completion_source"] is None
+        assert out["start_datetime"] is None
+        assert out["completed_tss"] is None
+        assert out["device_files"] == []
+
+    def test_detail_exposes_stable_block_exercise_and_set_ids(self):
+        data = {
+            "id": "20586028", "snapshot": {"totalSets": 2, "completedSets": 2},
+            "completionSource": None, "files": [],
+            "blocks": [{
+                "id": 116817367, "blockType": "SingleExercise", "isComplete": True,
+                "prescriptions": [{
+                    "id": 186561914, "complianceState": "Compliant",
+                    "exercise": {"id": 154, "title": "Leg Press", "primaryMuscleGroups": ["Quadriceps"]},
+                    "sets": [{"id": 466786613, "setOrigin": "Prescribed", "isComplete": True,
+                              "parameterValues": [
+                                  {"parameter": "Reps", "prescribedValue": "8", "executedValue": "8"},
+                                  {"parameter": "WeightLb", "prescribedValue": None, "executedValue": "120"},
+                              ]}],
+                }],
+            }],
+        }
+        out = _fmt_workout_detail(data)
+        block = out["blocks"][0]
+        assert block["block_id"] == "116817367"
+        assert block["complete"] is True
+        ex = block["exercises"][0]
+        assert ex["prescription_id"] == "186561914"
+        assert ex["exercise_id"] == "154"
+        assert ex["primary_muscle_groups"] == ["Quadriceps"]
+        assert ex["compliance_state"] == "Compliant"
+        s = ex["sets"][0]
+        assert s["set_id"] == "466786613"
+        assert s["origin"] == "Prescribed"
+        assert s["prescribed"] == {"Reps": "8"}
+        assert s["executed"] == {"Reps": "8", "WeightLb": "120"}
+
+    @pytest.mark.asyncio
+    async def test_list_exposes_execution_evidence(self):
+        items = [{
+            "id": 30557969, "prescribedDate": "2026-09-16", "title": "Strength",
+            "workoutType": "StructuredStrength", "complianceState": "Unplanned",
+            "totalSets": 0, "completedSets": 0, "hasFileData": True, "hasPrescribedData": False,
+            "executedDurationInSeconds": 2859, "startDateTime": "2026-09-16T18:56:14",
+            "completedDateTime": "2026-09-16T19:43:53", "completedTss": 35.0,
+            "completedTssSource": "HeartRateTss", "completedIntensityFactor": 0.63,
+            "rpe": None, "feel": None, "lastUpdatedAt": "2026-09-16T16:45:34",
+            "orderOnDay": None, "workoutSubTypeId": None, "sequenceSummary": [],
+        }]
+        http = _mock_http(200, items)
+        with patch("tp_mcp.tools.strength.TPClient") as mtp:
+            mtp.return_value.__aenter__.return_value = _mock_tp_client()
+            with patch("tp_mcp.tools.strength.httpx.AsyncClient") as mh:
+                mh.return_value.__aenter__.return_value = http
+                r = await tp_get_strength_workouts(start_date="2026-09-01", end_date="2026-09-30")
+        w = r["workouts"][0]
+        assert w["has_file_data"] is True
+        assert w["has_prescribed_data"] is False
+        assert w["executed_duration_sec"] == 2859
+        assert w["start_datetime"] == "2026-09-16T18:56:14"
+        assert w["completed_datetime"] == "2026-09-16T19:43:53"
+        assert w["completed_tss"] == 35.0
+        assert w["completed_tss_source"] == "HeartRateTss"
+        assert w["last_updated_at"] == "2026-09-16T16:45:34"
+        assert "completion_source" not in w
 
 
 # ── Update (in-place upsert) ─────────────────────────────────────────────────

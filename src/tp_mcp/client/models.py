@@ -99,6 +99,8 @@ class WorkoutSummary(BaseModel):
     distance_actual: float | None = Field(default=None, alias="distance")
     completed: bool | None = Field(default=None)
     description: str | None = None
+    # Athlete-local recorded start, e.g. "2026-06-10T18:19:37". Null for plans.
+    start_time: str | None = Field(default=None, alias="startTime")
 
     @property
     def date(self) -> date_type:

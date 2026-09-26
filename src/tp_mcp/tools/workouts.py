@@ -245,6 +245,7 @@ async def tp_get_workouts(
                     "tss_planned": w.tss_planned,
                     "tss_actual": w.tss_actual,
                     "description": w.description,
+                    "start_time": w.start_time,
                 }
                 for w in workouts
             ]
@@ -334,6 +335,7 @@ async def tp_get_workout(workout_id: str) -> dict[str, Any]:
                 "workout_type": workout.workout_type,
                 "description": workout.description,
                 # v6 fields not exposed by the parser model.
+                "start_time": raw_data.get("startTime"),
                 "rpe": raw_data.get("rpe"),
                 "feeling": raw_data.get("feeling"),
                 "new_comment": raw_data.get("newComment"),

@@ -45,6 +45,17 @@ Update semantics (probed 2026-08-02, live API):
     compliance correctly (`Compliant` / 100%).
   • Sets carry an undocumented `setOrigin` field; it round-trips harmlessly.
 
+Execution evidence (read live, 2026-09-25):
+  • Since about July 2026 device-recorded (Garmin) strength sessions land here as
+    `complianceState: "Unplanned"` with no blocks, `completionSource: "DeviceFile"`,
+    attached `files`, and heart-rate TSS. Earlier ones came through /fitness/v6
+    as Strength workouts, which are separate objects with their own ids. One real
+    session can exist in both APIs; their start times overlap.
+  • `completionSource` values seen: "DeviceFile", "MobileExecution",
+    "CompletedAsPlanned" (executed values copied from the plan), and null (web
+    completion). It is present on the detail document only, not in the list.
+  • `executedDurationInSeconds` is a real duration only for "DeviceFile".
+
 This tool is intentionally unit-agnostic: it passes through whatever weight
 parameter the caller supplies (`WeightKg`, `WeightLb`, `WeightPercentage`, …).
 Choosing a default unit (e.g. kg) is the caller's concern, not the connector's.
@@ -827,18 +838,67 @@ def _fmt_set(s: dict[str, Any]) -> dict[str, Any]:
             prescribed[p] = pv["prescribedValue"]
         if pv.get("executedValue") is not None:
             executed[p] = pv["executedValue"]
-    return {"prescribed": prescribed, "executed": executed, "complete": bool(s.get("isComplete"))}
+    return {
+        "set_id": _str_id(s.get("id")),
+        "origin": s.get("setOrigin"),
+        "prescribed": prescribed,
+        "executed": executed,
+        "complete": bool(s.get("isComplete")),
+    }
+
+
+def _str_id(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
 def _fmt_prescription(p: dict[str, Any]) -> dict[str, Any]:
     """One prescription = one exercise + its sets."""
     ex = p.get("exercise") or {}
     return {
+        "prescription_id": _str_id(p.get("id")),
+        "exercise_id": _str_id(ex.get("id")),
         "exercise": ex.get("title"),
+        "primary_muscle_groups": list(ex.get("primaryMuscleGroups") or []),
         "video_url": ex.get("videoUrl"),
         "notes": p.get("coachNotes"),
+        "compliance_state": p.get("complianceState"),
         "compliance_percent": p.get("compliancePercent"),
         "sets": [_fmt_set(s) for s in (p.get("sets") or [])],
+    }
+
+
+def _fmt_device_files(files: Any) -> list[dict[str, Any]]:
+    """Attached activity files, without storage keys."""
+    return [
+        {
+            "file_name": f.get("fileName"),
+            "is_garmin": f.get("isGarmin"),
+            "device_make": f.get("deviceMake"),
+            "device_model": f.get("deviceModel"),
+            "uploaded_at": f.get("dateUploaded"),
+        }
+        for f in (files or [])
+        if isinstance(f, dict)
+    ]
+
+
+def _execution_fields(d: dict[str, Any]) -> dict[str, Any]:
+    """Execution evidence shared by list and detail payloads.
+
+    Times are athlete-local without an offset. `executed_duration_sec` is only a
+    real activity duration when `completion_source` is "DeviceFile"; for manual
+    or mobile completion it is the gap between start and complete taps.
+    """
+    return {
+        "start_datetime": d.get("startDateTime"),
+        "completed_datetime": d.get("completedDateTime"),
+        "executed_duration_sec": d.get("executedDurationInSeconds"),
+        "completed_tss": d.get("completedTss"),
+        "completed_tss_source": d.get("completedTssSource"),
+        "completed_intensity_factor": d.get("completedIntensityFactor"),
+        "order_on_day": d.get("orderOnDay"),
+        "workout_subtype_id": d.get("workoutSubTypeId"),
+        "last_updated_at": d.get("lastUpdatedAt"),
     }
 
 
@@ -848,7 +908,9 @@ def _fmt_workout_detail(d: dict[str, Any]) -> dict[str, Any]:
     for b in d.get("blocks") or []:
         blocks_out.append(
             {
+                "block_id": _str_id(b.get("id")),
                 "type": b.get("blockType"),
+                "complete": bool(b.get("isComplete")),
                 "title": b.get("title"),
                 "notes": b.get("coachNotes"),
                 "compliance_percent": b.get("compliancePercent"),
@@ -870,6 +932,9 @@ def _fmt_workout_detail(d: dict[str, Any]) -> dict[str, Any]:
         "feel": d.get("feel"),
         "total_sets": snap.get("totalSets"),
         "completed_sets": snap.get("completedSets"),
+        "completion_source": d.get("completionSource"),
+        **_execution_fields(d),
+        "device_files": _fmt_device_files(d.get("files")),
         "blocks": blocks_out,
     }
 
@@ -887,8 +952,10 @@ async def tp_get_strength_workouts(start_date: str, end_date: str) -> dict[str, 
 
     Returns:
         Dict with `count`, `date_range`, and `workouts` — each with workout_id,
-        date, title, workout_type, planned duration, compliance, set totals, and
-        an ordered `exercises` preview (from the workout's sequence summary).
+        date, title, workout_type, planned duration, compliance, set totals,
+        execution evidence (start/completed time, executed duration, completed
+        TSS, has_file_data, last_updated_at), and an ordered `exercises` preview
+        (from the workout's sequence summary).
     """
     start = str(start_date).strip()
     end = str(end_date).strip()
@@ -929,6 +996,13 @@ async def tp_get_strength_workouts(start_date: str, end_date: str) -> dict[str, 
                 "compliance_percent": w.get("compliancePercent"),
                 "total_sets": w.get("totalSets"),
                 "completed_sets": w.get("completedSets"),
+                # The list carries no completionSource. hasFileData is its
+                # device-recording signal.
+                "has_file_data": w.get("hasFileData"),
+                "has_prescribed_data": w.get("hasPrescribedData"),
+                "rpe": w.get("rpe"),
+                "feel": w.get("feel"),
+                **_execution_fields(w),
                 "exercises": [
                     s.get("title") for s in (w.get("sequenceSummary") or []) if s.get("title")
                 ],
@@ -951,7 +1025,9 @@ async def tp_get_strength_workout(workout_id: str) -> dict[str, Any]:
 
     Returns:
         Dict with the workout metadata (date, title, duration, compliance, RPE,
-        feel) and `blocks` → `exercises` → `sets`, each set giving prescribed vs
+        feel), execution evidence (completion source, start/completed time,
+        completed TSS and its source, attached device files) and `blocks` →
+        `exercises` → `sets` with stable ids, each set giving prescribed vs
         executed parameter values (Reps, WeightKg, …) and a completion flag.
     """
     wid = str(workout_id).strip()

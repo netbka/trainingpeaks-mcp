@@ -63,6 +63,25 @@ class TestTpGetWorkouts:
         assert planned["tss"] == 40
 
     @pytest.mark.asyncio
+    async def test_get_workouts_exposes_recorded_start_time(self):
+        """start_time lets a caller match one session recorded in two TP APIs."""
+        items = [
+            {"workoutId": 3783987829, "workoutDay": "2026-06-10T00:00:00", "title": "Strength",
+             "workoutTypeValueId": 9, "totalTime": 0.79, "startTime": "2026-06-10T18:19:37"},
+            {"workoutId": 3783987830, "workoutDay": "2026-06-11T00:00:00", "title": "Plan",
+             "workoutTypeValueId": 9, "totalTimePlanned": 1.0},
+        ]
+        with patch("tp_mcp.tools.workouts.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.get = AsyncMock(return_value=APIResponse(success=True, data=items))
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            result = await tp_get_workouts("2026-06-10", "2026-06-11")
+
+        assert [w["start_time"] for w in result["workouts"]] == ["2026-06-10T18:19:37", None]
+
+    @pytest.mark.asyncio
     async def test_get_workouts_filter_completed(self, mock_api_responses):
         """Test filtering for completed workouts only."""
         workouts_response = APIResponse(success=True, data=mock_api_responses["workouts"])
@@ -240,6 +259,22 @@ class TestTpGetWorkout:
         assert result["feeling"] == 3
         assert result["new_comment"] == "Felt controlled."
         assert result["has_private_workout_note"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_workout_includes_recorded_start_time(self, mock_api_responses):
+        workout_data = dict(mock_api_responses["workout_detail"])
+        workout_data["startTime"] = "2026-09-08T12:36:11"
+        with patch("tp_mcp.tools.workouts.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.get = AsyncMock(
+                side_effect=[APIResponse(success=True, data=workout_data), APIResponse(success=True, data={})]
+            )
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            result = await tp_get_workout("1001")
+
+        assert result["start_time"] == "2026-09-08T12:36:11"
 
     @pytest.mark.asyncio
     async def test_get_workout_not_found(self):
