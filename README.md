@@ -23,7 +23,6 @@ Ask your AI assistant things like:
 - "Set my FTP to 310 and update my power zones"
 - "Add a calendar note for next Monday: rest day, travel"
 
-## Tools (86)
 ## Tools (87)
 
 ### Workouts
@@ -175,6 +174,7 @@ delete contract is verified.
 ### Reference & Auth
 | Tool | Description |
 |------|-------------|
+| `tp_get_athlete_by_email` | Find an athlete already present in the current coach roster by exact email; useful for post-invite/account-creation reconciliation |
 | `tp_get_workout_types` | List all sport types and subtypes with IDs |
 | `tp_get_profile` | Get athlete profile |
 | `tp_auth_status` | Check authentication status |

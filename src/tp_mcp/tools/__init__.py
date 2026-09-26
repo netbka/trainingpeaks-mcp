@@ -56,7 +56,7 @@ from tp_mcp.tools.plans import (
     tp_get_training_plan_workouts,
     tp_list_training_plans,
 )
-from tp_mcp.tools.profile import tp_get_profile, tp_list_athletes
+from tp_mcp.tools.profile import tp_get_athlete_by_email, tp_get_profile, tp_list_athletes
 from tp_mcp.tools.refresh_auth import tp_refresh_auth
 from tp_mcp.tools.settings import (
     tp_create_zones,
@@ -129,6 +129,7 @@ __all__ = [
     "tp_delete_workout",
     "tp_delete_workout_file",
     "tp_download_workout_file",
+    "tp_get_athlete_by_email",
     "tp_get_athlete_settings",
     "tp_get_atp",
     "tp_list_training_plans",

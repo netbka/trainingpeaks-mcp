@@ -56,6 +56,7 @@ from tp_mcp.tools import (
     tp_delete_workout,
     tp_delete_workout_file,
     tp_download_workout_file,
+    tp_get_athlete_by_email,
     tp_get_athlete_settings,
     tp_get_atp,
     tp_get_availability,
@@ -180,6 +181,24 @@ TOOLS = [
         name="tp_get_profile",
         description="Get athlete profile. Rarely needed - other tools work without it.",
         input_schema={"type": "object", "properties": {}, "required": []},
+    ),
+    Tool(
+        name="tp_get_athlete_by_email",
+        description=(
+            "Find an athlete already present in the current coach roster by exact email. "
+            "Use for reconciliation after an invite or coach-created account; this does "
+            "not search TrainingPeaks globally and does not create or attach an athlete."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "description": "Athlete email address to match in the current coach roster.",
+                },
+            },
+            "required": ["email"],
+        },
     ),
     Tool(
         name="tp_refresh_auth",
@@ -1524,7 +1543,7 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 _ATHLETE_EXEMPT_TOOLS = {
     "tp_auth_status", "tp_refresh_auth", "tp_validate_structure",
-    "tp_list_athletes", "tp_get_workout_types",
+    "tp_list_athletes", "tp_get_athlete_by_email", "tp_get_workout_types",
     # Coach-scoped — enumerates methods under the caller's own user, not an athlete.
     "tp_get_zone_methods",
     # Offline exercise-library search — not athlete-scoped.
@@ -1647,6 +1666,10 @@ async def _h_auth_status(args): return await tp_auth_status()
 
 @_handler("tp_get_profile")
 async def _h_get_profile(args): return await tp_get_profile()
+
+@_handler("tp_get_athlete_by_email")
+async def _h_get_athlete_by_email(args):
+    return await tp_get_athlete_by_email(email=args["email"])
 
 @_handler("tp_list_athletes")
 async def _h_list_athletes(args): return await tp_list_athletes()
